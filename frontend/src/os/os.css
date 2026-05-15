@@ -709,31 +709,6 @@
 .ax-chat-compose button:hover:not(:disabled) { filter: brightness(1.1); }
 .ax-chat-compose button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* CUSTOM CURSOR */
-html.ax-cursor-on, html.ax-cursor-on body { cursor: none !important; }
-html.ax-cursor-on a, html.ax-cursor-on button, html.ax-cursor-on .nx-icon, html.ax-cursor-on input, html.ax-cursor-on textarea, html.ax-cursor-on [role="button"] { cursor: none !important; }
-.ax-cursor-dot, .ax-cursor-ring {
-  position: fixed; top: 0; left: 0;
-  pointer-events: none; z-index: 99999;
-  will-change: transform; transition: opacity 0.15s ease-out;
-}
-.ax-cursor-dot {
-  width: 6px; height: 6px;
-  background: var(--ax-accent, #6366f1);
-  border-radius: 50%;
-  box-shadow: 0 0 12px rgba(var(--ax-accent-rgb, 99,102,241), 0.7);
-}
-.ax-cursor-ring {
-  width: 28px; height: 28px;
-  border: 1.5px solid var(--ax-accent, #6366f1);
-  border-radius: 50%; opacity: 0.55;
-  transition: opacity 0.18s, width 0.16s, height 0.16s, border-width 0.16s, transform 0.05s linear;
-}
-html.ax-cursor-hover .ax-cursor-ring { width: 38px; height: 38px; border-width: 2px; opacity: 0.75; }
-html.ax-cursor-down .ax-cursor-ring { width: 22px; height: 22px; border-width: 2.5px; opacity: 0.95; }
-html.ax-cursor-text .ax-cursor-dot { width: 2px; height: 18px; border-radius: 2px; }
-html.ax-cursor-text .ax-cursor-ring { opacity: 0; }
-
 /* CLOCK APP */
 .ax-clockapp { display: flex; flex-direction: column; height: 100%; }
 .ax-clock-face { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 16px; }
@@ -848,51 +823,103 @@ html.ax-cursor-text .ax-cursor-ring { opacity: 0; }
   flex: 1; cursor: crosshair;
   display: block; width: 100%;
 }
-html.ax-cursor-on .ax-paint-canvas { cursor: none; }
+/* ============================================================
+   CUSTOM CURSOR
+   ============================================================ */
+/* hide native cursor everywhere when active */
+html.ax-cursor-on, html.ax-cursor-on * { cursor: none !important; }
+html.ax-cursor-on input, html.ax-cursor-on textarea { cursor: none !important; }
 
-/* Cursor variants */
-html[data-cursor-mode="minimal"] .ax-cursor-ring { display: none; }
-html[data-cursor-mode="minimal"] .ax-cursor-dot { width: 8px; height: 8px; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,0.4); }
-
-html[data-cursor-mode="crosshair"] .ax-cursor-ring {
-  width: 26px; height: 26px;
-  background:
-    linear-gradient(var(--ax-accent), var(--ax-accent)) center/2px 100% no-repeat,
-    linear-gradient(var(--ax-accent), var(--ax-accent)) center/100% 2px no-repeat;
-  border: 1px solid var(--ax-accent); opacity: 0.85;
+.ax-cursor-dot, .ax-cursor-ring {
+  position: fixed; top: 0; left: 0;
+  pointer-events: none;
+  z-index: 999999;
+  will-change: transform;
+  border-radius: 50%;
+  box-sizing: border-box;
 }
-html[data-cursor-mode="crosshair"] .ax-cursor-dot { width: 4px; height: 4px; background: var(--ax-accent); }
+.ax-cursor-dot {
+  width: 6px; height: 6px;
+  background: var(--ax-accent, #6366f1);
+  box-shadow: 0 0 12px rgba(var(--ax-accent-rgb, 99,102,241), 0.7);
+}
+.ax-cursor-ring {
+  width: 28px; height: 28px;
+  border: 1.5px solid var(--ax-accent, #6366f1);
+  opacity: 0.55;
+  transition: width 0.16s, height 0.16s, opacity 0.18s, border-width 0.16s, background 0.16s;
+}
+html.ax-cursor-hover .ax-cursor-ring { width: 38px; height: 38px; border-width: 2px; opacity: 0.85; }
+html.ax-cursor-down .ax-cursor-ring { width: 22px; height: 22px; border-width: 2.5px; opacity: 1; }
+html.ax-cursor-text .ax-cursor-dot { width: 2px; height: 18px; border-radius: 1px; }
+html.ax-cursor-text .ax-cursor-ring { opacity: 0; }
 
+/* Variant: Ring only (no inner dot) */
+html[data-cursor-mode="ring"] .ax-cursor-dot { display: none; }
+html[data-cursor-mode="ring"] .ax-cursor-ring { width: 22px; height: 22px; border-width: 2px; opacity: 0.95; }
+
+/* Variant: Minimal (small white dot, no ring) */
+html[data-cursor-mode="minimal"] .ax-cursor-ring { display: none; }
+html[data-cursor-mode="minimal"] .ax-cursor-dot {
+  width: 9px; height: 9px;
+  background: #ffffff;
+  box-shadow: 0 0 0 1.5px rgba(0,0,0,0.55);
+}
+
+/* Variant: Crosshair */
+html[data-cursor-mode="crosshair"] .ax-cursor-ring {
+  width: 30px; height: 30px;
+  border: 1px solid var(--ax-accent);
+  opacity: 0.95;
+  background:
+    linear-gradient(var(--ax-accent), var(--ax-accent)) center/2px 60% no-repeat,
+    linear-gradient(var(--ax-accent), var(--ax-accent)) center/60% 2px no-repeat;
+}
+html[data-cursor-mode="crosshair"] .ax-cursor-dot {
+  width: 4px; height: 4px;
+  background: var(--ax-accent);
+  box-shadow: none;
+}
+
+/* Variant: Glow */
 html[data-cursor-mode="glow"] .ax-cursor-ring {
-  width: 42px; height: 42px;
-  background: radial-gradient(circle, rgba(var(--ax-accent-rgb), 0.6) 0%, rgba(var(--ax-accent-rgb), 0) 70%);
-  border: none; opacity: 0.85; filter: blur(3px);
+  width: 56px; height: 56px;
+  border: none;
+  background: radial-gradient(circle, rgba(var(--ax-accent-rgb), 0.55) 0%, rgba(var(--ax-accent-rgb), 0) 65%);
+  opacity: 0.9;
+  filter: blur(2px);
 }
 html[data-cursor-mode="glow"] .ax-cursor-dot {
-  width: 8px; height: 8px;
-  background: #fff;
-  box-shadow: 0 0 18px 4px rgba(var(--ax-accent-rgb), 0.9);
+  width: 9px; height: 9px;
+  background: #ffffff;
+  box-shadow: 0 0 22px 5px rgba(var(--ax-accent-rgb), 0.95);
 }
+
+/* Variant: Dot+Ring (default) — uses base styles, nothing extra */
 
 /* ANIMATED BACKGROUNDS */
 .ax-bg {
-  position: fixed; inset: 0;
+  position: absolute; inset: 0;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
 }
-/* All other direct children of the root are positioned (fixed/absolute)
-   and use their own z-index — keep them above the animated background. */
+/* Make sure the icons / windows / taskbar sit above the animated bg */
+.nx-desktop { z-index: 5; }
+.nx-window { /* z is set inline (>=100) */ }
+.nx-taskbar { z-index: 10000; }
 
-.ax-bg-aurora { mix-blend-mode: screen; }
+.ax-bg-aurora {
+  /* No blend mode — render as solid translucent blobs over the wallpaper */
+}
 .ax-bg-aurora .ax-bg-blob {
-  position: absolute; width: 70vmax; height: 70vmax;
-  border-radius: 50%; filter: blur(80px); opacity: 0.55;
+  position: absolute; width: 80vmax; height: 80vmax;
+  border-radius: 50%; filter: blur(100px); opacity: 0.95;
   will-change: transform;
 }
-.ax-bg-aurora .ax-bg-blob.a { background: radial-gradient(circle, rgba(99,102,241,0.85), transparent 60%); top: -25vmax; left: -25vmax; animation: ax-blob-a 22s ease-in-out infinite alternate; }
-.ax-bg-aurora .ax-bg-blob.b { background: radial-gradient(circle, rgba(168,85,247,0.7), transparent 60%); bottom: -25vmax; right: -20vmax; animation: ax-blob-b 26s ease-in-out infinite alternate; }
-.ax-bg-aurora .ax-bg-blob.c { background: radial-gradient(circle, rgba(34,211,238,0.55), transparent 60%); top: 30vh; left: 30vw; animation: ax-blob-c 32s ease-in-out infinite alternate; }
+.ax-bg-aurora .ax-bg-blob.a { background: radial-gradient(circle, rgba(99,102,241,0.95), transparent 55%); top: -30vmax; left: -25vmax; animation: ax-blob-a 22s ease-in-out infinite alternate; }
+.ax-bg-aurora .ax-bg-blob.b { background: radial-gradient(circle, rgba(217,70,239,0.9), transparent 55%); bottom: -28vmax; right: -22vmax; animation: ax-blob-b 26s ease-in-out infinite alternate; }
+.ax-bg-aurora .ax-bg-blob.c { background: radial-gradient(circle, rgba(34,211,238,0.85), transparent 55%); top: 25vh; left: 28vw; animation: ax-blob-c 32s ease-in-out infinite alternate; }
 @keyframes ax-blob-a { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(20vw, 12vh, 0) scale(1.15); } }
 @keyframes ax-blob-b { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-18vw, -10vh, 0) scale(1.1); } }
 @keyframes ax-blob-c { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-12vw, 18vh, 0) scale(0.85); } }

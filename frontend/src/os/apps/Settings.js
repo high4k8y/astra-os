@@ -234,8 +234,9 @@ export default function Settings() {
               <div className="nx-set-title">Cursor style</div>
               <div className="ax-pickrow" data-testid="set-cursor-list">
                 {[
-                  { id: "none", label: "System" },
+                  { id: "system", label: "Normal" },
                   { id: "dot", label: "Dot + Ring" },
+                  { id: "ring", label: "Ring" },
                   { id: "minimal", label: "Minimal" },
                   { id: "crosshair", label: "Crosshair" },
                   { id: "glow", label: "Glow" },

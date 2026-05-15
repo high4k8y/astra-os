@@ -10,7 +10,7 @@ const DEFAULTS = {
   transparency: 0.72,
   fontSize: 14,
   rgb: false,
-  cursor: "dot",          // "none" | "dot" | "crosshair" | "glow" | "minimal"
+  cursor: "dot",          // "system" | "dot" | "ring" | "minimal" | "crosshair" | "glow"
   clock24: false,         // false = 12h, true = 24h (military)
   animatedBg: "none",     // "none" | "aurora" | "stars" | "grid" | "waves"
 };
@@ -30,7 +30,8 @@ export function SettingsProvider({ children }) {
       if (raw) {
         const parsed = JSON.parse(raw);
         // migrate legacy boolean cursor → string
-        if (typeof parsed.cursor === "boolean") parsed.cursor = parsed.cursor ? "dot" : "none";
+        if (typeof parsed.cursor === "boolean") parsed.cursor = parsed.cursor ? "dot" : "system";
+        if (parsed.cursor === "none") parsed.cursor = "system";
         return { ...DEFAULTS, ...parsed };
       }
     } catch (e) { /* ignore */ }

@@ -93,7 +93,8 @@ function Shell() {
 
   return (
     <div className={`nx-root ${settings.rgb ? "nx-rgb" : ""}`} data-testid="os-root">
-      <CustomCursor enabled={!!settings.cursor} />
+      <AnimatedBackground mode={settings.animatedBg || "none"} />
+      <CustomCursor mode={settings.cursor || "dot"} />
       <BootLoader />
       <Desktop onLaunch={launch} />
       {windows.map((w) => {

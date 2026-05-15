@@ -881,9 +881,8 @@ html[data-cursor-mode="glow"] .ax-cursor-dot {
   z-index: 0;
   overflow: hidden;
 }
-.nx-root > .ax-bg { z-index: 0; }
-.nx-root > * { position: relative; z-index: 1; }
-.nx-root > .ax-bg { z-index: 0; }
+/* All other direct children of the root are positioned (fixed/absolute)
+   and use their own z-index — keep them above the animated background. */
 
 .ax-bg-aurora { mix-blend-mode: screen; }
 .ax-bg-aurora .ax-bg-blob {

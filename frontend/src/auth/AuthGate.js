@@ -133,7 +133,7 @@ export default function AuthGate() {
                     type="text"
                     value={devCode}
                     onChange={(e) => setDevCode(e.target.value)}
-                    placeholder="ASTRA-DEV-XXXX"
+                    placeholder="enter code"
                     data-testid="auth-devcode"
                     spellCheck="false"
                     autoCapitalize="off"

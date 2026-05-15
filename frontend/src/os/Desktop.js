@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush, Store as StoreIcon } from "lucide-react";
+import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush, Store as StoreIcon, ShieldAlert } from "lucide-react";
 import { loadInstalled } from "./installedApps";
+import { useAuth } from "../auth/AuthContext";
 
 const ICON_STORAGE = "astra-icon-positions";
 
@@ -16,9 +17,10 @@ export const BUILTIN_ICONS = [
   { id: "Clock",      label: "CLOCK",     Icon: ClockIcon },
   { id: "Snake",      label: "SNAKE",     Icon: Gamepad2 },
   { id: "Paint",      label: "PAINT",     Icon: Brush },
+  { id: "DevConsole", label: "DEV SYS",   Icon: ShieldAlert },
 ];
 
-// Backwards-compat for Taskbar
+// Backwards-compat for Taskbar (ICON_BY_ID map needs DevConsole too)
 export const DESKTOP_ICONS = BUILTIN_ICONS;
 
 function defaultPositionFor(index) {
@@ -81,6 +83,7 @@ function DraggableIcon({ id, label, position, onMove, onLaunch, children, testid
 export default function Desktop({ onLaunch }) {
   const [positions, setPositions] = useState(loadPositions);
   const [apps, setApps] = useState(loadInstalled);
+  const { user } = useAuth();
 
   useEffect(() => {
     const refresh = () => setApps(loadInstalled());
@@ -92,13 +95,20 @@ export default function Desktop({ onLaunch }) {
 
   const move = (id, pos) => setPositions((p) => ({ ...p, [id]: pos }));
 
+  const builtins = [...BUILTIN_ICONS];
+  if (!user?.is_dev) {
+    // Hide DevConsole icon from regular users
+    const idx = builtins.findIndex((b) => b.id === "DevConsole");
+    if (idx >= 0) builtins.splice(idx, 1);
+  }
+
   const all = [
-    ...BUILTIN_ICONS.map((b, i) => ({ kind: "builtin", id: b.id, label: b.label, defIdx: i, render: () => <b.Icon size={22} strokeWidth={1.5} /> })),
+    ...builtins.map((b, i) => ({ kind: "builtin", id: b.id, label: b.label, defIdx: i, render: () => <b.Icon size={22} strokeWidth={1.5} /> })),
     ...apps.map((a, i) => ({
       kind: "app",
       id: `app:${a.id}`,
       label: a.name.toUpperCase().slice(0, 9),
-      defIdx: BUILTIN_ICONS.length + i,
+      defIdx: builtins.length + i,
       app: a,
       render: () => (
         <div className="ax-installed-icon" style={{ background: a.color }}>{a.emoji}</div>

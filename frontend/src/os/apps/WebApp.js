@@ -6,13 +6,27 @@ const PROXY = `${process.env.REACT_APP_BACKEND_URL || ""}/api/proxy?url=`;
 /**
  * WebApp — a minimal browser-like wrapper for installed third-party apps.
  * The app object: { id, name, url, color, emoji }
+ *
+ * Note: many real apps (Discord, YouTube, ChatGPT, Spotify) use cookies, JS,
+ * and login flows the proxy can't replay. The UI surfaces an "Open in real
+ * browser" CTA so users can always reach the working app.
  */
 export default function WebApp({ app, onClose }) {
   const [history, setHistory] = useState([app.url]);
   const [hIdx, setHIdx] = useState(0);
   const [src, setSrc] = useState(PROXY + encodeURIComponent(app.url));
   const [loading, setLoading] = useState(true);
+  const [loadStarted, setLoadStarted] = useState(Date.now());
+  const [showWarn, setShowWarn] = useState(false);
   const iframeRef = useRef(null);
+
+  // If iframe doesn't load within 6s, show "open in real browser" warning
+  useEffect(() => {
+    setShowWarn(false);
+    if (!loading) return;
+    const id = setTimeout(() => { if (loading) setShowWarn(true); }, 6000);
+    return () => clearTimeout(id);
+  }, [loading, loadStarted]);
 
   const navigate = (url) => {
     setHistory((h) => {
@@ -23,6 +37,7 @@ export default function WebApp({ app, onClose }) {
     setHIdx((i) => i + 1);
     setSrc(PROXY + encodeURIComponent(url));
     setLoading(true);
+    setLoadStarted(Date.now());
   };
 
   const back = () => {
@@ -87,6 +102,26 @@ export default function WebApp({ app, onClose }) {
           />
         ) : null}
         {loading && <div className="ax-webapp-loading">loading {app.name}…</div>}
+        {showWarn && (
+          <div className="ax-webapp-fallback" data-testid={`webapp-${app.id}-fallback`}>
+            <div className="ax-webapp-fallback-card">
+              <div className="ax-webapp-fallback-icon" style={{ background: app.color }}>{app.emoji}</div>
+              <div className="ax-webapp-fallback-title">{app.name} won't embed</div>
+              <div className="ax-webapp-fallback-text">
+                {app.name} blocks embedding or needs a real browser session (cookies, login, JS APIs).
+                Open it in your real browser — your settings here are preserved.
+              </div>
+              <a
+                className="ax-webapp-fallback-btn"
+                href={app.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid={`webapp-${app.id}-openreal`}
+              >Open {app.name} in your browser</a>
+              <button className="ax-webapp-fallback-link" onClick={() => setShowWarn(false)}>Keep waiting</button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="ax-webapp-status">
         <span className={`dot ${loading ? "loading" : ""}`} />

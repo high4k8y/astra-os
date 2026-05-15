@@ -160,11 +160,19 @@ async def register(payload: RegisterIn):
         "username_lower": uname.lower(),
         "password_hash": hash_password(payload.password),
         "is_dev": is_dev,
+        "is_banned": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(user)
     safe = {k: v for k, v in user.items() if k != "password_hash"}
     token = create_token(user["id"], user["username"], is_dev)
+    # Audit + broadcast a chat "joined" announcement (only on REGISTRATION, not on WS connect)
+    await _log_event("register", user_id=user["id"], username=uname, meta={"is_dev": is_dev})
+    try:
+        join_doc = _msg_doc("system", f"{uname} joined Astra")
+        await _save_and_broadcast(join_doc)
+    except Exception:
+        pass
     return AuthOut(token=token, user=user_to_out(safe))
 
 
@@ -173,7 +181,10 @@ async def login(payload: LoginIn):
     u = await db.users.find_one({"username_lower": payload.username.strip().lower()})
     if not u or not verify_password(payload.password, u["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if u.get("is_banned"):
+        raise HTTPException(status_code=403, detail="This account has been banned.")
     token = create_token(u["id"], u["username"], bool(u.get("is_dev", False)))
+    await _log_event("login", user_id=u["id"], username=u["username"])
     return AuthOut(token=token, user=user_to_out(u))
 
 
@@ -216,6 +227,30 @@ class ConnectionManager:
         for ws_id in dead:
             await self.disconnect(ws_id)
 
+    async def send_to_user(self, user_id: str, message: dict) -> int:
+        sent = 0
+        for ws_id, c in list(self.connections.items()):
+            if c["user"]["id"] == user_id:
+                try:
+                    await c["ws"].send_json(message)
+                    sent += 1
+                except Exception:
+                    await self.disconnect(ws_id)
+        return sent
+
+    async def kick_user(self, user_id: str) -> int:
+        kicked = 0
+        for ws_id, c in list(self.connections.items()):
+            if c["user"]["id"] == user_id:
+                try:
+                    await c["ws"].send_json({"type": "kicked", "reason": "Disconnected by an administrator."})
+                    await c["ws"].close(code=4001)
+                except Exception:
+                    pass
+                await self.disconnect(ws_id)
+                kicked += 1
+        return kicked
+
 
 manager = ConnectionManager()
 
@@ -229,6 +264,37 @@ def _msg_doc(kind: str, text: str, user: Optional[dict] = None) -> dict:
         "text": text,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def _log_event(action: str, user_id: Optional[str] = None, username: Optional[str] = None, meta: Optional[dict] = None):
+    try:
+        await db.events.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": action,
+            "user_id": user_id,
+            "username": username,
+            "meta": meta or {},
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logging.warning("event log failed: %s", e)
+
+
+async def _blocked_words() -> List[str]:
+    doc = await db.config.find_one({"_id": "blocked_words"}, {"_id": 0, "words": 1})
+    return list(doc["words"]) if doc and "words" in doc else []
+
+
+def _filter_message(text: str, blocked: List[str]) -> str:
+    if not blocked or not text:
+        return text
+    out = text
+    for w in blocked:
+        if not w:
+            continue
+        pattern = re.compile(r"(?i)\b" + re.escape(w) + r"\b")
+        out = pattern.sub("*" * max(3, len(w)), out)
+    return out
 
 
 async def _save_and_broadcast(doc: dict):
@@ -265,17 +331,18 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...)):
         if not user:
             await websocket.close(code=4401)
             return
+        if user.get("is_banned"):
+            await websocket.close(code=4003)
+            return
     except Exception:
         await websocket.close(code=4401)
         return
 
     ws_id = await manager.connect(websocket, user)
 
-    # send roster + system join
+    # Send initial roster + recent history (no "joined the chat" spam — that happens on registration)
     try:
         await websocket.send_json({"type": "online", "users": manager.online_users()})
-        join_doc = _msg_doc("system", f"{user['username']} joined the chat")
-        await _save_and_broadcast(join_doc)
         await manager.broadcast({"type": "online", "users": manager.online_users()})
 
         while True:
@@ -284,6 +351,8 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...)):
             if not text:
                 continue
             text = text[:500]
+            blocked = await _blocked_words()
+            text = _filter_message(text, blocked)
             doc = _msg_doc("msg", text, user)
             await _save_and_broadcast(doc)
     except WebSocketDisconnect:
@@ -293,8 +362,6 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...)):
     finally:
         await manager.disconnect(ws_id)
         try:
-            leave_doc = _msg_doc("system", f"{user['username']} left the chat")
-            await _save_and_broadcast(leave_doc)
             await manager.broadcast({"type": "online", "users": manager.online_users()})
         except Exception:
             pass
@@ -410,6 +477,130 @@ async def proxy(url: str = Query(...)):
 @app.get("/api/proxy/health")
 async def proxy_health():
     return {"ok": True, "service": "astra-proxy"}
+
+
+# -------------------- ADMIN (is_dev only) --------------------
+async def get_dev_user(user: dict = Depends(get_current_user)) -> dict:
+    if not bool(user.get("is_dev", False)):
+        raise HTTPException(status_code=403, detail="Developer access required.")
+    return user
+
+
+class BanIn(BaseModel):
+    reason: Optional[str] = None
+
+
+class BlockedWordsIn(BaseModel):
+    words: List[str]
+
+
+class NotifyIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    body: str = Field(min_length=1, max_length=400)
+
+
+class LaunchIn(BaseModel):
+    app: str = Field(min_length=1, max_length=64)
+
+
+@api_router.get("/admin/users")
+async def admin_users(_: dict = Depends(get_dev_user)):
+    rows = await db.users.find(
+        {}, {"_id": 0, "password_hash": 0, "username_lower": 0}
+    ).sort("created_at", -1).to_list(500)
+    online_ids = {u["id"] for u in manager.online_users()}
+    for r in rows:
+        r["online"] = r["id"] in online_ids
+    return {"users": rows}
+
+
+@api_router.post("/admin/users/{user_id}/ban")
+async def admin_ban(user_id: str, payload: BanIn, dev: dict = Depends(get_dev_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "is_dev": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.get("is_dev"):
+        raise HTTPException(status_code=400, detail="Cannot ban a developer account.")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_banned": True, "ban_reason": payload.reason or ""}})
+    await _log_event("ban", user_id=user_id, username=target["username"], meta={"by": dev["username"], "reason": payload.reason or ""})
+    kicked = await manager.kick_user(user_id)
+    await manager.broadcast({"type": "online", "users": manager.online_users()})
+    return {"ok": True, "kicked": kicked}
+
+
+@api_router.post("/admin/users/{user_id}/unban")
+async def admin_unban(user_id: str, dev: dict = Depends(get_dev_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_banned": False}, "$unset": {"ban_reason": ""}})
+    await _log_event("unban", user_id=user_id, username=target["username"], meta={"by": dev["username"]})
+    return {"ok": True}
+
+
+@api_router.post("/admin/users/{user_id}/kick")
+async def admin_kick(user_id: str, dev: dict = Depends(get_dev_user)):
+    kicked = await manager.kick_user(user_id)
+    await manager.broadcast({"type": "online", "users": manager.online_users()})
+    await _log_event("kick", user_id=user_id, meta={"by": dev["username"], "kicked": kicked})
+    return {"ok": True, "kicked": kicked}
+
+
+@api_router.post("/admin/users/{user_id}/notify")
+async def admin_notify(user_id: str, payload: NotifyIn, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {
+        "type": "notify",
+        "title": payload.title,
+        "body": payload.body,
+        "from": dev["username"],
+    })
+    await _log_event("notify", user_id=user_id, meta={"by": dev["username"], "title": payload.title})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/launch")
+async def admin_launch(user_id: str, payload: LaunchIn, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {
+        "type": "launch",
+        "app": payload.app,
+        "from": dev["username"],
+    })
+    await _log_event("launch", user_id=user_id, meta={"by": dev["username"], "app": payload.app})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/broadcast")
+async def admin_broadcast(payload: NotifyIn, dev: dict = Depends(get_dev_user)):
+    await manager.broadcast({
+        "type": "notify",
+        "title": payload.title,
+        "body": payload.body,
+        "from": dev["username"],
+        "broadcast": True,
+    })
+    await _log_event("broadcast", username=dev["username"], meta={"title": payload.title})
+    return {"ok": True}
+
+
+@api_router.get("/admin/events")
+async def admin_events(limit: int = 100, _: dict = Depends(get_dev_user)):
+    cursor = db.events.find({}, {"_id": 0}).sort("ts", -1).limit(min(max(limit, 1), 500))
+    return {"events": await cursor.to_list(length=limit)}
+
+
+@api_router.get("/admin/blocked-words")
+async def admin_get_blocked_words(_: dict = Depends(get_dev_user)):
+    return {"words": await _blocked_words()}
+
+
+@api_router.post("/admin/blocked-words")
+async def admin_set_blocked_words(payload: BlockedWordsIn, dev: dict = Depends(get_dev_user)):
+    cleaned = [w.strip() for w in payload.words if w and w.strip()][:200]
+    await db.config.update_one(
+        {"_id": "blocked_words"}, {"$set": {"words": cleaned}}, upsert=True
+    )
+    await _log_event("blocked_words_update", username=dev["username"], meta={"count": len(cleaned)})
+    return {"ok": True, "words": cleaned}
 
 
 # -------------------- FINALIZE --------------------

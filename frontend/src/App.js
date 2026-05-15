@@ -25,6 +25,8 @@ import Snake from "./os/apps/Snake";
 import Paint from "./os/apps/Paint";
 import Store from "./os/apps/Store";
 import WebApp from "./os/apps/WebApp";
+import DevConsole from "./os/apps/DevConsole";
+import ControlListener from "./os/ControlListener";
 import { loadInstalled } from "./os/installedApps";
 
 const APP_META = {
@@ -39,6 +41,7 @@ const APP_META = {
   Clock:      { title: "Clock",      w: 460, h: 380, comp: Clock },
   Snake:      { title: "Snake",      w: 540, h: 540, comp: Snake },
   Paint:      { title: "Paint",      w: 720, h: 520, comp: Paint },
+  DevConsole: { title: "Dev Console",w: 880, h: 560, comp: DevConsole },
 };
 
 function spawnPos(n) {
@@ -113,6 +116,7 @@ function Shell() {
     <div className={`nx-root ${settings.rgb ? "nx-rgb" : ""}`} data-testid="os-root">
       <AnimatedBackground mode={settings.animatedBg || "none"} />
       <CustomCursor mode={settings.cursor || "dot"} />
+      <ControlListener />
       <BootLoader />
       <Desktop onLaunch={launch} />
       {windows.map((w) => {

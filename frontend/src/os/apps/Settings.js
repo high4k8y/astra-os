@@ -218,15 +218,64 @@ export default function Settings() {
               </div>
               <div className="nx-row">
                 <div>
-                  <div className="nx-row-label">Custom cursor</div>
-                  <div className="nx-row-help">Sleek dot &amp; ring cursor with hover states.</div>
+                  <div className="nx-row-label">24-hour clock</div>
+                  <div className="nx-row-help">Display military time (e.g. 14:30) instead of 2:30 PM.</div>
                 </div>
                 <button
-                  className={`nx-toggle ${settings.cursor ? "on" : ""}`}
-                  onClick={() => update({ cursor: !settings.cursor })}
-                  data-testid="set-cursor-toggle"
-                  aria-label="toggle custom cursor"
+                  className={`nx-toggle ${settings.clock24 ? "on" : ""}`}
+                  onClick={() => update({ clock24: !settings.clock24 })}
+                  data-testid="set-clock24-toggle"
+                  aria-label="toggle 24h clock"
                 />
+              </div>
+            </div>
+
+            <div className="nx-set-section">
+              <div className="nx-set-title">Cursor style</div>
+              <div className="ax-pickrow" data-testid="set-cursor-list">
+                {[
+                  { id: "none", label: "System" },
+                  { id: "dot", label: "Dot + Ring" },
+                  { id: "minimal", label: "Minimal" },
+                  { id: "crosshair", label: "Crosshair" },
+                  { id: "glow", label: "Glow" },
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    className={`ax-pick ${settings.cursor === c.id ? "active" : ""}`}
+                    onClick={() => update({ cursor: c.id })}
+                    data-testid={`set-cursor-${c.id}`}
+                  >
+                    <span className={`ax-pick-preview ax-pick-cursor-${c.id}`} aria-hidden />
+                    <span>{c.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="nx-set-section">
+              <div className="nx-set-title">Animated background</div>
+              <div className="ax-pickrow" data-testid="set-animbg-list">
+                {[
+                  { id: "none",   label: "Off" },
+                  { id: "aurora", label: "Aurora" },
+                  { id: "stars",  label: "Stars" },
+                  { id: "grid",   label: "Grid" },
+                  { id: "waves",  label: "Waves" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    className={`ax-pick ${settings.animatedBg === b.id ? "active" : ""}`}
+                    onClick={() => update({ animatedBg: b.id })}
+                    data-testid={`set-animbg-${b.id}`}
+                  >
+                    <span className={`ax-pick-preview ax-pick-bg-${b.id}`} aria-hidden />
+                    <span>{b.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="nx-row-help" style={{ marginTop: 6 }}>
+                Renders behind your wallpaper. Set to Off to disable.
               </div>
             </div>
             <div className="nx-set-section">

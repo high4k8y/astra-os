@@ -10,7 +10,9 @@ const DEFAULTS = {
   transparency: 0.72,
   fontSize: 14,
   rgb: false,
-  cursor: true,
+  cursor: "dot",          // "none" | "dot" | "crosshair" | "glow" | "minimal"
+  clock24: false,         // false = 12h, true = 24h (military)
+  animatedBg: "none",     // "none" | "aurora" | "stars" | "grid" | "waves"
 };
 
 const SettingsCtx = createContext(null);
@@ -25,7 +27,12 @@ export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // migrate legacy boolean cursor → string
+        if (typeof parsed.cursor === "boolean") parsed.cursor = parsed.cursor ? "dot" : "none";
+        return { ...DEFAULTS, ...parsed };
+      }
     } catch (e) { /* ignore */ }
     return DEFAULTS;
   });

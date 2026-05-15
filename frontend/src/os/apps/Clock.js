@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useSettings } from "../SettingsContext";
 
 function fmt(ms) {
   const total = Math.max(0, Math.floor(ms));
@@ -9,6 +10,7 @@ function fmt(ms) {
 }
 
 function ClockFace() {
+  const { settings } = useSettings();
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 500);
@@ -17,7 +19,10 @@ function ClockFace() {
   return (
     <div className="ax-clock-face" data-testid="clock-face">
       <div className="ax-clock-time">
-        {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
+        {now.toLocaleTimeString([], {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour12: !settings.clock24,
+        })}
       </div>
       <div className="ax-clock-date">
         {now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}

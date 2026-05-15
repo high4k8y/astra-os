@@ -3,20 +3,26 @@ import { DESKTOP_ICONS } from "./Desktop";
 import AstraLogo from "./AstraLogo";
 import { LogOut, Code2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { useSettings } from "./SettingsContext";
 
 const ICON_BY_ID = Object.fromEntries(DESKTOP_ICONS.map((i) => [i.id, i.Icon]));
 
 export default function Taskbar({ windows, onToggle, focusedId, onLaunchSettings }) {
   const { user, logout } = useAuth();
+  const { settings } = useSettings();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
     const tick = () =>
-      setClock(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      setClock(new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: !settings.clock24,
+      }));
     tick();
     const id = setInterval(tick, 10000);
     return () => clearInterval(id);
-  }, []);
+  }, [settings.clock24]);
 
   return (
     <div className="nx-taskbar" data-testid="taskbar">

@@ -11,6 +11,7 @@ import Desktop from "./os/Desktop";
 import Window from "./os/Window";
 import Taskbar from "./os/Taskbar";
 import CustomCursor from "./os/CustomCursor";
+import AnimatedBackground from "./os/AnimatedBackground";
 
 import Browser from "./os/apps/Browser";
 import Settings from "./os/apps/Settings";

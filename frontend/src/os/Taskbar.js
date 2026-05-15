@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { DESKTOP_ICONS } from "./Desktop";
+import AstraLogo from "./AstraLogo";
+import { LogOut, Code2 } from "lucide-react";
+import { useAuth } from "../auth/AuthContext";
 
 const ICON_BY_ID = Object.fromEntries(DESKTOP_ICONS.map((i) => [i.id, i.Icon]));
 
-export default function Taskbar({ windows, onToggle, focusedId }) {
+export default function Taskbar({ windows, onToggle, focusedId, onLaunchSettings }) {
+  const { user, logout } = useAuth();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
@@ -16,10 +20,17 @@ export default function Taskbar({ windows, onToggle, focusedId }) {
 
   return (
     <div className="nx-taskbar" data-testid="taskbar">
-      <div className="nx-tb-logo" data-testid="taskbar-logo">
-        <span className="nx-tb-logo-dot" />
-        ASTRA
+      <div className="nx-tb-logo" data-testid="taskbar-logo" onClick={onLaunchSettings} title="Settings" role="button">
+        <AstraLogo size={22} glow={false} />
+        <span style={{ marginLeft: 4 }}>ASTRA</span>
       </div>
+
+      {user?.is_dev && (
+        <div className="nx-tb-dev" data-testid="taskbar-devchip">
+          <Code2 size={11} strokeWidth={2} /> DEV
+        </div>
+      )}
+
       {windows.length > 0 && <div className="nx-tb-divider" />}
       <div className="nx-dock" data-testid="taskbar-dock">
         {windows.map((w) => {
@@ -38,6 +49,20 @@ export default function Taskbar({ windows, onToggle, focusedId }) {
         })}
       </div>
       <div className="nx-tb-spacer" />
+
+      {user && (
+        <>
+          <div className="nx-tb-divider" />
+          <div className="nx-tb-user" data-testid="taskbar-user" title={user.username}>
+            <span className="nx-tb-avatar">{(user.username || "?").slice(0, 1).toUpperCase()}</span>
+            <span className="nx-tb-username">{user.username}</span>
+          </div>
+          <button className="nx-tb-logout" onClick={logout} title="Sign out" data-testid="taskbar-logout">
+            <LogOut size={14} strokeWidth={1.7} />
+          </button>
+        </>
+      )}
+
       <div className="nx-tb-divider" />
       <div className="nx-clock" data-testid="taskbar-clock">{clock}</div>
     </div>

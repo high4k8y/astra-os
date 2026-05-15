@@ -3,6 +3,9 @@ import "@/App.css";
 import "./os/os.css";
 
 import { SettingsProvider, useSettings } from "./os/SettingsContext";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
+import AuthGate from "./auth/AuthGate";
+
 import BootLoader from "./os/BootLoader";
 import Desktop from "./os/Desktop";
 import Window from "./os/Window";
@@ -14,10 +17,12 @@ import Notes from "./os/apps/Notes";
 import Terminal from "./os/apps/Terminal";
 import Files from "./os/apps/Files";
 import Calculator from "./os/apps/Calculator";
+import Chat from "./os/apps/Chat";
 
 const APP_META = {
   Browser:    { title: "Browser",    w: 920, h: 580, comp: Browser },
-  Settings:   { title: "Settings",   w: 580, h: 560, comp: Settings },
+  Chat:       { title: "Chat",       w: 760, h: 520, comp: Chat },
+  Settings:   { title: "Settings",   w: 580, h: 580, comp: Settings },
   Notes:      { title: "Notes",      w: 580, h: 460, comp: Notes },
   Terminal:   { title: "Terminal",   w: 660, h: 420, comp: Terminal },
   Files:      { title: "Files",      w: 600, h: 420, comp: Files },
@@ -101,15 +106,28 @@ function Shell() {
           </Window>
         );
       })}
-      <Taskbar windows={windows} focusedId={focusedId} onToggle={toggleFromDock} />
+      <Taskbar
+        windows={windows}
+        focusedId={focusedId}
+        onToggle={toggleFromDock}
+        onLaunchSettings={() => launch("Settings")}
+      />
     </div>
   );
 }
 
+function Gate() {
+  const { user } = useAuth();
+  if (!user) return <AuthGate />;
+  return <Shell />;
+}
+
 export default function App() {
   return (
-    <SettingsProvider>
-      <Shell />
-    </SettingsProvider>
+    <AuthProvider>
+      <SettingsProvider>
+        <Gate />
+      </SettingsProvider>
+    </AuthProvider>
   );
 }

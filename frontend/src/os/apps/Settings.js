@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { useSettings } from "../SettingsContext";
+import { useAuth } from "../../auth/AuthContext";
+import { LogOut, Code2 } from "lucide-react";
 
 const ACCENT_COLORS = [
   "#6366f1", "#3b82f6", "#06b6d4", "#10b981",
@@ -20,11 +22,13 @@ const TABS = [
   { id: "appearance", label: "Appearance" },
   { id: "wallpaper",  label: "Wallpaper" },
   { id: "display",    label: "Display" },
+  { id: "account",    label: "Account" },
   { id: "system",     label: "System" },
 ];
 
 export default function Settings() {
   const { settings, update, reset } = useSettings();
+  const { user, logout } = useAuth();
   const [tab, setTab] = useState("appearance");
 
   return (
@@ -143,6 +147,46 @@ export default function Settings() {
                   />
                   <span className="nx-slider-val">{settings.fontSize}px</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "account" && (
+          <div data-testid="set-pane-account">
+            <div className="nx-set-section">
+              <div className="nx-set-title">Signed in as</div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label" data-testid="set-account-username">{user?.username || "—"}</div>
+                  <div className="nx-row-help">Account ID: {user?.id?.slice(0, 8) || "—"}…</div>
+                </div>
+                {user?.is_dev && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#86efac", fontSize: 11, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase" }} data-testid="set-account-devbadge">
+                    <Code2 size={12} strokeWidth={2} /> developer
+                  </div>
+                )}
+              </div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">Created</div>
+                  <div className="nx-row-help">When you joined Astra OS.</div>
+                </div>
+                <div className="nx-slider-val" style={{ minWidth: 120 }}>
+                  {user?.created_at ? new Date(user.created_at).toLocaleDateString() : "—"}
+                </div>
+              </div>
+            </div>
+            <div className="nx-set-section">
+              <div className="nx-set-title">Session</div>
+              <div className="nx-btn-row">
+                <button className="nx-btn" onClick={logout} data-testid="set-logout">
+                  <LogOut size={13} strokeWidth={1.7} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                  Sign out
+                </button>
+              </div>
+              <div className="nx-row-help" style={{ marginTop: 8 }}>
+                Sessions persist on this device for 30 days.
               </div>
             </div>
           </div>

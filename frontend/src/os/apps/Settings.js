@@ -16,6 +16,14 @@ const WALLPAPERS = [
   "https://images.unsplash.com/photo-1462331940025-496de9e46e46?q=80&w=3840",
   "https://images.unsplash.com/photo-1464802680160-9c7f5d5a4a64?q=80&w=3840",
   "https://images.unsplash.com/photo-1506318137071-a8e0661ad6d8?q=80&w=3840",
+  "https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?q=80&w=3840",
+  "https://images.unsplash.com/photo-1419833173245-f59e1b93f9ee?q=80&w=3840",
+  "https://images.unsplash.com/photo-1439853949127-fa647821eba0?q=80&w=3840",
+  "https://images.unsplash.com/photo-1472552944129-b035e9ea3744?q=80&w=3840",
+  "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?q=80&w=3840",
+  "https://images.unsplash.com/photo-1528459801416-a9e53bbf4e17?q=80&w=3840",
+  "https://images.unsplash.com/photo-1444080748397-f442aa95c3e5?q=80&w=3840",
+  "https://images.unsplash.com/photo-1518837695005-2083093ee35b?q=80&w=3840",
 ];
 
 const TABS = [
@@ -206,6 +214,18 @@ export default function Settings() {
                   onClick={() => update({ rgb: !settings.rgb })}
                   data-testid="set-rgb-toggle"
                   aria-label="toggle rgb"
+                />
+              </div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">Custom cursor</div>
+                  <div className="nx-row-help">Sleek dot &amp; ring cursor with hover states.</div>
+                </div>
+                <button
+                  className={`nx-toggle ${settings.cursor ? "on" : ""}`}
+                  onClick={() => update({ cursor: !settings.cursor })}
+                  data-testid="set-cursor-toggle"
+                  aria-label="toggle custom cursor"
                 />
               </div>
             </div>

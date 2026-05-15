@@ -10,6 +10,7 @@ const DEFAULTS = {
   transparency: 0.72,
   fontSize: 14,
   rgb: false,
+  cursor: true,
 };
 
 const SettingsCtx = createContext(null);

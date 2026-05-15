@@ -10,6 +10,7 @@ import BootLoader from "./os/BootLoader";
 import Desktop from "./os/Desktop";
 import Window from "./os/Window";
 import Taskbar from "./os/Taskbar";
+import CustomCursor from "./os/CustomCursor";
 
 import Browser from "./os/apps/Browser";
 import Settings from "./os/apps/Settings";
@@ -18,6 +19,9 @@ import Terminal from "./os/apps/Terminal";
 import Files from "./os/apps/Files";
 import Calculator from "./os/apps/Calculator";
 import Chat from "./os/apps/Chat";
+import Clock from "./os/apps/Clock";
+import Snake from "./os/apps/Snake";
+import Paint from "./os/apps/Paint";
 
 const APP_META = {
   Browser:    { title: "Browser",    w: 920, h: 580, comp: Browser },
@@ -27,10 +31,13 @@ const APP_META = {
   Terminal:   { title: "Terminal",   w: 660, h: 420, comp: Terminal },
   Files:      { title: "Files",      w: 600, h: 420, comp: Files },
   Calculator: { title: "Calculator", w: 320, h: 460, comp: Calculator },
+  Clock:      { title: "Clock",      w: 460, h: 380, comp: Clock },
+  Snake:      { title: "Snake",      w: 540, h: 540, comp: Snake },
+  Paint:      { title: "Paint",      w: 720, h: 520, comp: Paint },
 };
 
 function spawnPos(n) {
-  return { x: 200 + (n % 6) * 28, y: 70 + (n % 6) * 24 };
+  return { x: 220 + (n % 6) * 28, y: 70 + (n % 6) * 24 };
 }
 
 function Shell() {
@@ -64,7 +71,6 @@ function Shell() {
     });
   }, [zTop]);
 
-  // Expose launcher for terminal `open <app>` command
   if (typeof window !== "undefined") window.__astraLaunch = launch;
 
   const close = useCallback((id) => {
@@ -86,6 +92,7 @@ function Shell() {
 
   return (
     <div className={`nx-root ${settings.rgb ? "nx-rgb" : ""}`} data-testid="os-root">
+      <CustomCursor enabled={!!settings.cursor} />
       <BootLoader />
       <Desktop onLaunch={launch} />
       {windows.map((w) => {

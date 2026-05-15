@@ -23,9 +23,13 @@ import Chat from "./os/apps/Chat";
 import Clock from "./os/apps/Clock";
 import Snake from "./os/apps/Snake";
 import Paint from "./os/apps/Paint";
+import Store from "./os/apps/Store";
+import WebApp from "./os/apps/WebApp";
+import { loadInstalled } from "./os/installedApps";
 
 const APP_META = {
   Browser:    { title: "Browser",    w: 920, h: 580, comp: Browser },
+  Store:      { title: "App Store",  w: 720, h: 560, comp: Store },
   Chat:       { title: "Chat",       w: 760, h: 520, comp: Chat },
   Settings:   { title: "Settings",   w: 580, h: 580, comp: Settings },
   Notes:      { title: "Notes",      w: 580, h: 460, comp: Notes },
@@ -62,13 +66,27 @@ function Shell() {
         setFocusedId(id);
         return ws.map((w) => (w.id === id ? { ...w, z, minimized: false } : w));
       }
+      // built-in app?
       const meta = APP_META[id];
-      if (!meta) return ws;
-      const { x, y } = spawnPos(ws.length);
-      const z = zTop + 1;
-      setZTop(z);
-      setFocusedId(id);
-      return [...ws, { id, x, y, w: meta.w, h: meta.h, z, minimized: false }];
+      if (meta) {
+        const { x, y } = spawnPos(ws.length);
+        const z = zTop + 1;
+        setZTop(z);
+        setFocusedId(id);
+        return [...ws, { id, kind: "builtin", x, y, w: meta.w, h: meta.h, z, minimized: false }];
+      }
+      // installed app? id format "app:<appId>"
+      if (id.startsWith("app:")) {
+        const appId = id.slice(4);
+        const app = loadInstalled().find((a) => a.id === appId);
+        if (!app) return ws;
+        const { x, y } = spawnPos(ws.length);
+        const z = zTop + 1;
+        setZTop(z);
+        setFocusedId(id);
+        return [...ws, { id, kind: "webapp", app, x, y, w: 1000, h: 620, z, minimized: false }];
+      }
+      return ws;
     });
   }, [zTop]);
 
@@ -99,19 +117,29 @@ function Shell() {
       <Desktop onLaunch={launch} />
       {windows.map((w) => {
         if (w.minimized) return null;
-        const meta = APP_META[w.id];
-        const Comp = meta.comp;
+        let title = "App";
+        let body = null;
+        if (w.kind === "webapp") {
+          title = w.app.name;
+          body = <WebApp app={w.app} onClose={() => close(w.id)} />;
+        } else {
+          const meta = APP_META[w.id];
+          if (!meta) return null;
+          title = meta.title;
+          const Comp = meta.comp;
+          body = <Comp />;
+        }
         return (
           <Window
             key={w.id}
             id={w.id}
-            title={meta.title}
+            title={title}
             x={w.x} y={w.y} w={w.w} h={w.h} z={w.z}
             onFocus={() => focus(w.id)}
             onClose={() => close(w.id)}
             onMinimize={() => minimize(w.id)}
           >
-            <Comp />
+            {body}
           </Window>
         );
       })}

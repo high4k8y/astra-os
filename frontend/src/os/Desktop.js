@@ -1,36 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush, Store as StoreIcon } from "lucide-react";
+import { loadInstalled } from "./installedApps";
 
-const STORAGE_KEY = "astra-icon-positions";
+const ICON_STORAGE = "astra-icon-positions";
 
-const DEFAULT_POSITIONS = {
-  Browser:    { x: 32, y: 32  },
-  Chat:       { x: 32, y: 130 },
-  Settings:   { x: 32, y: 228 },
-  Notes:      { x: 32, y: 326 },
-  Terminal:   { x: 32, y: 424 },
-  Files:      { x: 32, y: 522 },
-  Calculator: { x: 32, y: 620 },
-  Clock:      { x: 130, y: 32 },
-  Snake:      { x: 130, y: 130 },
-  Paint:      { x: 130, y: 228 },
-};
-
-function loadPositions() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_POSITIONS, ...JSON.parse(raw) };
-  } catch (e) { /* ignore */ }
-  return DEFAULT_POSITIONS;
-}
-
-function savePositions(positions) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(positions)); } catch (e) { /* ignore */ }
-}
-
-import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush } from "lucide-react";
-
-export const DESKTOP_ICONS_LIST = [
+export const BUILTIN_ICONS = [
   { id: "Browser",    label: "BROWSER",   Icon: Globe },
+  { id: "Store",      label: "STORE",     Icon: StoreIcon },
   { id: "Chat",       label: "CHAT",      Icon: MessageSquare },
   { id: "Settings",   label: "SETTINGS",  Icon: SettingsIcon },
   { id: "Notes",      label: "NOTES",     Icon: FileText },
@@ -42,21 +18,34 @@ export const DESKTOP_ICONS_LIST = [
   { id: "Paint",      label: "PAINT",     Icon: Brush },
 ];
 
-// Backwards-compat with Taskbar.js
-export const DESKTOP_ICONS = DESKTOP_ICONS_LIST;
+// Backwards-compat for Taskbar
+export const DESKTOP_ICONS = BUILTIN_ICONS;
 
-function DraggableIcon({ icon, position, onMove, onLaunch }) {
-  const ref = useRef(null);
+function defaultPositionFor(index) {
+  const COL = 100;
+  const ROW = 98;
+  const c = Math.floor(index / 6);
+  const r = index % 6;
+  return { x: 32 + c * COL, y: 32 + r * ROW };
+}
+
+function loadPositions() {
+  try {
+    const raw = localStorage.getItem(ICON_STORAGE);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function savePositions(p) {
+  try { localStorage.setItem(ICON_STORAGE, JSON.stringify(p)); } catch (e) { /* ignore */ }
+}
+
+function DraggableIcon({ id, label, position, onMove, onLaunch, children, testid }) {
   const drag = useRef(null);
 
   const onMouseDown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    drag.current = {
-      sx: e.clientX, sy: e.clientY,
-      ox: position.x, oy: position.y,
-      moved: false,
-    };
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: position.x, oy: position.y, moved: false };
     const move = (ev) => {
       if (!drag.current) return;
       const dx = ev.clientX - drag.current.sx;
@@ -64,16 +53,12 @@ function DraggableIcon({ icon, position, onMove, onLaunch }) {
       if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true;
       const nx = Math.max(8, Math.min(window.innerWidth - 96, drag.current.ox + dx));
       const ny = Math.max(8, Math.min(window.innerHeight - 110, drag.current.oy + dy));
-      onMove(icon.id, { x: nx, y: ny });
+      onMove(id, { x: nx, y: ny });
     };
     const up = () => {
-      const moved = drag.current?.moved;
       drag.current = null;
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
-      if (!moved) {
-        // Single click — do nothing; double-click handler launches
-      }
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -81,37 +66,65 @@ function DraggableIcon({ icon, position, onMove, onLaunch }) {
 
   return (
     <div
-      ref={ref}
       className="nx-icon"
       style={{ left: position.x, top: position.y }}
       onMouseDown={onMouseDown}
-      onDoubleClick={() => onLaunch(icon.id)}
-      data-testid={`desktop-icon-${icon.id}`}
+      onDoubleClick={() => onLaunch(id)}
+      data-testid={testid}
     >
-      <div className="nx-icon-box"><icon.Icon size={22} strokeWidth={1.5} /></div>
-      <div className="nx-icon-label">{icon.label}</div>
+      <div className="nx-icon-box">{children}</div>
+      <div className="nx-icon-label">{label}</div>
     </div>
   );
 }
 
 export default function Desktop({ onLaunch }) {
   const [positions, setPositions] = useState(loadPositions);
+  const [apps, setApps] = useState(loadInstalled);
+
+  useEffect(() => {
+    const refresh = () => setApps(loadInstalled());
+    window.addEventListener("astra-apps-updated", refresh);
+    return () => window.removeEventListener("astra-apps-updated", refresh);
+  }, []);
 
   useEffect(() => { savePositions(positions); }, [positions]);
 
   const move = (id, pos) => setPositions((p) => ({ ...p, [id]: pos }));
 
+  const all = [
+    ...BUILTIN_ICONS.map((b, i) => ({ kind: "builtin", id: b.id, label: b.label, defIdx: i, render: () => <b.Icon size={22} strokeWidth={1.5} /> })),
+    ...apps.map((a, i) => ({
+      kind: "app",
+      id: `app:${a.id}`,
+      label: a.name.toUpperCase().slice(0, 9),
+      defIdx: BUILTIN_ICONS.length + i,
+      app: a,
+      render: () => (
+        <div className="ax-installed-icon" style={{ background: a.color }}>{a.emoji}</div>
+      ),
+    })),
+  ];
+
   return (
     <div className="nx-desktop" data-testid="desktop">
-      {DESKTOP_ICONS_LIST.map((i) => (
-        <DraggableIcon
-          key={i.id}
-          icon={i}
-          position={positions[i.id] || DEFAULT_POSITIONS[i.id] || { x: 32, y: 32 }}
-          onMove={move}
-          onLaunch={onLaunch}
-        />
-      ))}
+      {all.map((it) => {
+        const pos = positions[it.id] || defaultPositionFor(it.defIdx);
+        const tid = it.kind === "builtin" ? `desktop-icon-${it.id}` : `desktop-app-${it.app.id}`;
+        return (
+          <DraggableIcon
+            key={it.id}
+            id={it.id}
+            label={it.label}
+            position={pos}
+            onMove={move}
+            onLaunch={onLaunch}
+            testid={tid}
+          >
+            {it.render()}
+          </DraggableIcon>
+        );
+      })}
     </div>
   );
 }

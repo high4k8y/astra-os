@@ -41,15 +41,18 @@ export default function Taskbar({ windows, onToggle, focusedId, onLaunchSettings
       <div className="nx-dock" data-testid="taskbar-dock">
         {windows.map((w) => {
           const Icon = ICON_BY_ID[w.id];
+          const isWebapp = w.id && typeof w.id === "string" && w.id.startsWith("app:");
           return (
             <button
               key={w.id}
               className={`nx-dock-btn ${focusedId === w.id && !w.minimized ? "active" : ""}`}
               onClick={() => onToggle(w.id)}
-              title={w.id}
+              title={isWebapp && w.app ? w.app.name : w.id}
               data-testid={`dock-btn-${w.id}`}
             >
-              {Icon ? <Icon size={16} strokeWidth={1.6} /> : "•"}
+              {isWebapp && w.app ? (
+                <span className="ax-installed-icon" style={{ background: w.app.color, fontSize: 11, width: 22, height: 22 }}>{w.app.emoji}</span>
+              ) : Icon ? <Icon size={16} strokeWidth={1.6} /> : "•"}
             </button>
           );
         })}

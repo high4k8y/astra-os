@@ -20,7 +20,8 @@ function resolveTarget(raw) {
   if (!v) return null;
   if (/^https?:\/\//i.test(v)) return v;
   if (/^[^\s]+\.[^\s]+$/.test(v)) return "https://" + v;
-  return "https://duckduckgo.com/?q=" + encodeURIComponent(v) + "&kp=-2";
+  // Use DuckDuckGo HTML-lite — works perfectly through the proxy (no JS needed)
+  return "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(v);
 }
 
 function loadBookmarks() {

@@ -108,7 +108,7 @@ export default function WebApp({ app }) {
             key={reloadKey + ":" + mode}
             src={src}
             title={app.name}
-            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads allow-storage-access-by-user-activation"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-presentation allow-modals allow-downloads allow-storage-access-by-user-activation"
             allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; picture-in-picture; web-share; storage-access"
             referrerPolicy="no-referrer"
             onLoad={() => setLoading(false)}

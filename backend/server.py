@@ -587,7 +587,7 @@ JS_SHIM_TEMPLATE = """
       });
     } catch(e){}
   });
-  // Anchor.href clicks: rewrite when set after parse
+  // Anchor.href clicks: rewrite when set after parse + force same-frame navigation
   try {
     var hd = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
     if (hd && hd.set) {
@@ -598,16 +598,30 @@ JS_SHIM_TEMPLATE = """
       });
     }
   } catch(e){}
-  // window.open: keep popups inside the proxied frame
+  // Intercept clicks on anchors with target=_blank — force same frame
+  document.addEventListener('click', function(ev){
+    try {
+      var a = ev.target && (ev.target.closest ? ev.target.closest('a[target]') : null);
+      if (a && a.target && a.target.toLowerCase() !== '_self') {
+        a.target = '_self';
+      }
+    } catch(e){}
+  }, true);
+  // window.open: keep navigation INSIDE the iframe — never spawn a new tab
   if (window.open) {
-    var _o = window.open;
-    window.open = function(u, t, f){ try { u = wrap(u); } catch(e){} return _o.call(window, u, t, f); };
+    window.open = function(u, t, f){
+      try { if (u) location.href = wrap(u); } catch(e){}
+      return window;  // pretend a window was opened
+    };
   }
-  // Form submissions
+  // Form submissions: rewrite + force _self target
   document.addEventListener('submit', function(ev){
     try {
       var f = ev.target;
-      if (f && f.tagName === 'FORM' && f.action) f.action = wrap(f.action);
+      if (f && f.tagName === 'FORM') {
+        if (f.action) f.action = wrap(f.action);
+        f.target = '_self';
+      }
     } catch(e){}
   }, true);
   // WebSocket — best-effort: block (most cross-origin WS will fail anyway)
@@ -637,6 +651,12 @@ def _rewrite_html(html: str, base_url: str) -> str:
     html = re.sub(
         r'(href|src|action|poster|formaction|data|cite|background)=(["\'])(.*?)\2',
         rewrite_attr, html, flags=re.IGNORECASE,
+    )
+
+    # Strip target="_blank" / target="_new" — keep everything in the same iframe
+    html = re.sub(
+        r'target=(["\'])(?:_blank|_new|_top|_parent)\1',
+        'target="_self"', html, flags=re.IGNORECASE,
     )
 
     # srcset

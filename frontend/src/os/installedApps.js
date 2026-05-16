@@ -12,9 +12,9 @@
 const KEY = "astra-installed-apps";
 
 export const CATALOG = [
-  // Official embeds — perfect drop-in app experience
-  { id: "youtube",   name: "YouTube",     url: "https://www.youtube.com",            color: "#ff0033", emoji: "▶",  desc: "Watch the world's videos.",            mode: "embed",   embed: "https://www.youtube-nocookie.com/embed?listType=user_uploads&list=trending" },
-  { id: "spotify",   name: "Spotify",     url: "https://open.spotify.com",           color: "#1DB954", emoji: "♫",  desc: "Music streaming & podcasts.",          mode: "embed",   embed: "https://open.spotify.com/embed/playlist/37i9dQZF1DXcBWIGoYBM5M?utm_source=generator&theme=0" },
+  // Real apps — full web players via proxy (login-capable thanks to per-user cookie jar)
+  { id: "spotify",   name: "Spotify",     url: "https://open.spotify.com",           color: "#1DB954", emoji: "♫",  desc: "Music streaming & podcasts. Log in for the full library.", mode: "proxy" },
+  { id: "youtube",   name: "YouTube",     url: "https://www.youtube.com",            color: "#ff0033", emoji: "▶",  desc: "Watch & sign in for your subscriptions.",                   mode: "proxy" },
 
   // Direct-iframe (no X-Frame-Options) — fastest, most native experience
   { id: "wikipedia", name: "Wikipedia",   url: "https://en.wikipedia.org/wiki/Main_Page", color: "#000000", emoji: "𝓦",  desc: "The free encyclopedia.",          mode: "direct" },

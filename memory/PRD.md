@@ -25,7 +25,7 @@ User uploaded fragments of a desktop-OS web app and asked to: rebuild it cleanly
 - DevConsole v1: users tab (ban/unban/kick/notify/launch), events, blocked-words, broadcast
 - ControlListener WS for receiving notify/launch/kicked
 
-### 2026-02-12 — Admin power-up + Hardware ban + Chat moderation + Native apps  ✅ NEW
+### 2026-02-12 — Admin power-up + Hardware ban + Chat moderation + Native apps  ✅
 - **Hardware ban**: device fingerprinting (canvas+UA+screen+UUID) at `/app/frontend/src/lib/fingerprint.js`. Sent with every login/register/WS connect. Endpoints `/admin/users/{id}/hwban` and `/hwunban` ban every device fingerprint we've seen for the user — both login AND new registration from that device get 403.
 - **Chat moderation**:
   - `/api/admin/chat/recent` admin moderation feed
@@ -41,6 +41,18 @@ User uploaded fragments of a desktop-OS web app and asked to: rebuild it cleanly
   - Floating overlay (reload + external link) only visible on hover
   - Catalog updated: marks Discord/ChatGPT/X/Twitch/Reddit as `fallback` (they can't iframe), promotes Wikipedia/DuckDuckGo/Lobsters/Maps/Archive to `direct`, MDN/HN/GitHub through `proxy`
   - Sandboxed iframe with broad `allow` (autoplay, clipboard, encrypted-media, fullscreen, PIP)
+
+### 2026-02-12 (later) — Proxy actually works  ✅
+- `/api/proxy` upgraded to a **real** browser-like fetcher:
+  - Spoofs Chrome 131 (UA + `sec-ch-ua` + `sec-ch-ua-mobile` + `sec-ch-ua-platform` + Referer)
+  - Strips `X-Frame-Options`, every CSP variant, `Referrer-Policy`, `Strict-Transport-Security`, `Set-Cookie`, etc.
+  - **Rewrites** href, src, action, poster, formaction, data, cite, background, srcset, inline `style="...url()..."`, and `<style>...</style>` blocks
+  - **Rewrites CSS responses**: every `url(...)` and `@import` inside text/css files routed through the proxy too
+  - **Injects a JS shim** at the top of every HTML page that monkey-patches `window.fetch`, `XMLHttpRequest.prototype.open`, every `*.prototype.src` setter (Image / Script / IFrame / Media / Source / Embed / Object), `HTMLAnchorElement.prototype.href`, `window.open`, and form submissions → every dynamic request stays inside the proxy
+  - Friendly **bot-block landing page** for 401/403/429 short responses, with an "Open in real browser" button — replaces the unreadable upstream error
+  - Catalog updated again: HN/Wikipedia/Archive/Lobsters → `direct` (best UX, no XFO), DDG/MDN/GitHub/OSM → `proxy`, Reddit/Discord/ChatGPT/X/Twitch → `fallback`
+  - Custom-URL installs default to `proxy` mode (most reliable for arbitrary sites)
+- WebApp.js now exposes a **mode toggle** (Zap icon in hover overlay) so power users can switch between proxy/direct on the fly
 
 ## Backend Endpoints (current)
 ### Auth

@@ -36,6 +36,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await axios.get(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${useTok}` },
+        withCredentials: true,
       });
       setUser(data);
     } catch (e) {
@@ -49,7 +50,11 @@ export function AuthProvider({ children }) {
 
   const login = async (username, password) => {
     const fp = fingerprint || (await getFingerprint());
-    const { data } = await axios.post(`${API}/auth/login`, { username, password, fingerprint: fp });
+    const { data } = await axios.post(
+      `${API}/auth/login`,
+      { username, password, fingerprint: fp },
+      { withCredentials: true },
+    );
     localStorage.setItem(TOKEN_KEY, data.token);
     setToken(data.token);
     setUser(data.user);
@@ -60,7 +65,7 @@ export function AuthProvider({ children }) {
     const fp = fingerprint || (await getFingerprint());
     const body = { username, password, fingerprint: fp };
     if (devCode) body.dev_code = devCode;
-    const { data } = await axios.post(`${API}/auth/register`, body);
+    const { data } = await axios.post(`${API}/auth/register`, body, { withCredentials: true });
     localStorage.setItem(TOKEN_KEY, data.token);
     setToken(data.token);
     setUser(data.user);

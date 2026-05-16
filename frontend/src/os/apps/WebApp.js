@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, RotateCw, Zap } from "lucide-react";
+import { RotateCw, Zap, ArrowLeft } from "lucide-react";
 
 const PROXY = `${process.env.REACT_APP_BACKEND_URL || ""}/api/proxy?url=`;
 
@@ -10,10 +10,10 @@ const PROXY = `${process.env.REACT_APP_BACKEND_URL || ""}/api/proxy?url=`;
  *   "proxy"    — route through /api/proxy (default; rewrites assets, fetch, XHR, srcset, CSS url())
  *   "embed"    — service-specific embed URL (e.g. YouTube nocookie / Spotify embed)
  *   "direct"   — straight iframe to the URL (only works for sites without X-Frame-Options)
- *   "fallback" — show "open in real browser" card immediately
+ *   "fallback" — show "stay in Astra" card immediately (no iframe attempt)
  *
- * If the chosen mode takes too long, escalate: direct → proxy → fallback, proxy → fallback.
- * The hover overlay exposes Reload + Direct/Proxy toggle + Open-in-real-browser.
+ * Nothing here ever takes the user outside Astra OS — no `target="_blank"`,
+ * no `Open in real browser` links. Failed loads stay inside the OS.
  */
 export default function WebApp({ app }) {
   const declared = app.mode || "proxy";
@@ -23,8 +23,8 @@ export default function WebApp({ app }) {
   const [showFallback, setShowFallback] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const triedProxyRef = useRef(false);
+  const triedDirectRef = useRef(false);
 
-  // Compute the iframe src for the active mode
   const targetSrc = useMemo(() => {
     if (mode === "embed" && app.embed) return app.embed;
     if (mode === "direct") return app.url;
@@ -32,16 +32,15 @@ export default function WebApp({ app }) {
     return "";
   }, [mode, app.url, app.embed]);
 
-  // Reset when the app or declared mode changes
   useEffect(() => {
     triedProxyRef.current = false;
+    triedDirectRef.current = false;
     setMode(declared);
     setShowFallback(false);
     setLoading(true);
     setReloadKey((k) => k + 1);
   }, [app.id, app.url, declared]);
 
-  // Sync src to active target / show fallback for fallback-mode apps
   useEffect(() => {
     if (mode === "fallback") {
       setShowFallback(true);
@@ -52,12 +51,18 @@ export default function WebApp({ app }) {
     }
   }, [mode, targetSrc]);
 
-  // Escalate on timeout (direct → proxy → fallback; proxy → fallback)
+  // Escalate on timeout: proxy → direct → fallback, direct → proxy → fallback
   useEffect(() => {
     if (!loading || mode === "fallback") return;
     const ms = mode === "direct" ? 5000 : 12000;
     const id = setTimeout(() => {
       if (!loading) return;
+      if (mode === "proxy" && !triedDirectRef.current) {
+        triedDirectRef.current = true;
+        setMode("direct");
+        setLoading(true);
+        return;
+      }
       if (mode === "direct" && !triedProxyRef.current) {
         triedProxyRef.current = true;
         setMode("proxy");
@@ -71,6 +76,7 @@ export default function WebApp({ app }) {
 
   const reload = () => {
     triedProxyRef.current = false;
+    triedDirectRef.current = false;
     setShowFallback(false);
     setLoading(true);
     setMode(declared);
@@ -84,6 +90,16 @@ export default function WebApp({ app }) {
     setReloadKey((k) => k + 1);
   };
 
+  // "Back" button: tells the iframe to history.back()
+  const goBack = () => {
+    try {
+      const iframe = document.querySelector(`[data-testid='webapp-${app.id}-iframe']`);
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.history.back();
+      }
+    } catch { /* cross-origin or other; ignore */ }
+  };
+
   return (
     <div className="ax-webapp ax-webapp-chromeless" data-testid={`webapp-${app.id}`}>
       <div className="ax-webapp-body">
@@ -92,8 +108,8 @@ export default function WebApp({ app }) {
             key={reloadKey + ":" + mode}
             src={src}
             title={app.name}
-            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads"
-            allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads allow-storage-access-by-user-activation"
+            allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; picture-in-picture; web-share; storage-access"
             referrerPolicy="no-referrer"
             onLoad={() => setLoading(false)}
             data-testid={`webapp-${app.id}-iframe`}
@@ -111,30 +127,32 @@ export default function WebApp({ app }) {
           <div className="ax-webapp-fallback" data-testid={`webapp-${app.id}-fallback`}>
             <div className="ax-webapp-fallback-card">
               <div className="ax-webapp-fallback-icon" style={{ background: app.color }}>{app.emoji}</div>
-              <div className="ax-webapp-fallback-title">{app.name}</div>
+              <div className="ax-webapp-fallback-title">{app.name} didn't connect</div>
               <div className="ax-webapp-fallback-text">
-                {app.name} won't load through the proxy — it likely requires a real login session,
-                browser cookies, or WebSocket connections that the proxy can't replay.
-                Open it in your real browser to use it normally.
+                {app.name} couldn't be reached through the proxy or direct iframe — it likely
+                challenges automated requests (Cloudflare, CAPTCHA) or requires a real OAuth flow.
+                Stay in Astra and try again, or switch loading mode.
               </div>
-              <a
-                className="ax-webapp-fallback-btn"
-                href={app.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid={`webapp-${app.id}-openreal`}
-              >Open {app.name} →</a>
-              <button className="ax-webapp-fallback-link" onClick={reload} data-testid={`webapp-${app.id}-retry`}>
-                <RotateCw size={11} strokeWidth={1.9} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                Try again
-              </button>
+              <div className="ax-webapp-fallback-actions">
+                <button className="ax-webapp-fallback-btn" onClick={reload} data-testid={`webapp-${app.id}-retry`}>
+                  <RotateCw size={12} strokeWidth={2} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                  Try again
+                </button>
+                <button className="ax-webapp-fallback-link" onClick={toggleMode} data-testid={`webapp-${app.id}-fallback-toggle`}>
+                  <Zap size={11} strokeWidth={1.9} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                  Try {mode === "proxy" ? "direct" : "proxy"} mode
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Floating overlay (visible on hover) */}
+        {/* Floating overlay (visible on hover) — purely internal controls, no external links */}
         {!showFallback && (
           <div className="ax-webapp-overlay">
+            <button onClick={goBack} title="Back" data-testid={`webapp-${app.id}-back`}>
+              <ArrowLeft size={13} strokeWidth={1.8} />
+            </button>
             <button onClick={reload} title="Reload" data-testid={`webapp-${app.id}-reload`}>
               <RotateCw size={13} strokeWidth={1.8} />
             </button>
@@ -143,9 +161,6 @@ export default function WebApp({ app }) {
                 <Zap size={13} strokeWidth={1.8} style={{ opacity: mode === "direct" ? 1 : 0.6 }} />
               </button>
             )}
-            <a href={app.url} target="_blank" rel="noopener noreferrer" title="Open in real browser" data-testid={`webapp-${app.id}-extopen`}>
-              <ExternalLink size={13} strokeWidth={1.8} />
-            </a>
           </div>
         )}
       </div>

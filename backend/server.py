@@ -160,8 +160,36 @@ def user_to_out(u: dict) -> UserOut:
 
 
 # -------------------- AUTH ROUTES --------------------
+SESSION_COOKIE = "astra_sess"
+SESSION_COOKIE_MAX_AGE = JWT_EXPIRES_DAYS * 24 * 3600
+
+
+def _set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _decode_session_cookie(request: Request) -> Optional[str]:
+    """Return user_id from astra_sess cookie if valid, else None."""
+    tok = request.cookies.get(SESSION_COOKIE)
+    if not tok:
+        return None
+    try:
+        payload = decode_token(tok)
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
 @api_router.post("/auth/register", response_model=AuthOut)
-async def register(payload: RegisterIn):
+async def register(payload: RegisterIn, response: Response):
     uname = payload.username.strip()
     if not re.fullmatch(r"[A-Za-z0-9_\-]{2,24}", uname):
         raise HTTPException(status_code=400, detail="Username may use letters, numbers, _ or - (2-24 chars).")
@@ -191,6 +219,7 @@ async def register(payload: RegisterIn):
     await db.users.insert_one(user)
     safe = {k: v for k, v in user.items() if k != "password_hash"}
     token = create_token(user["id"], user["username"], is_dev)
+    _set_session_cookie(response, token)
     # Audit + broadcast a chat "joined" announcement (only on REGISTRATION, not on WS connect)
     await _log_event("register", user_id=user["id"], username=uname, meta={"is_dev": is_dev, "fp": payload.fingerprint or ""})
     try:
@@ -202,7 +231,7 @@ async def register(payload: RegisterIn):
 
 
 @api_router.post("/auth/login", response_model=AuthOut)
-async def login(payload: LoginIn):
+async def login(payload: LoginIn, response: Response):
     u = await db.users.find_one({"username_lower": payload.username.strip().lower()})
     if not u or not verify_password(payload.password, u["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
@@ -212,6 +241,7 @@ async def login(payload: LoginIn):
         raise HTTPException(status_code=403, detail="This device has been banned from Astra OS.")
     await _remember_fingerprint(u["id"], payload.fingerprint)
     token = create_token(u["id"], u["username"], bool(u.get("is_dev", False)))
+    _set_session_cookie(response, token)
     await _log_event("login", user_id=u["id"], username=u["username"], meta={"fp": payload.fingerprint or ""})
     return AuthOut(token=token, user=user_to_out(u))
 
@@ -661,28 +691,123 @@ def _strip_block_headers(src: dict) -> dict:
     return out
 
 
+def _candidate_cookie_domains(host: str) -> List[str]:
+    """Domains a Cookie should match when sent upstream (exact host + parent suffixes)."""
+    host = host.lower().split(":")[0]
+    out = {host, "." + host}
+    parts = host.split(".")
+    for i in range(1, len(parts) - 1):
+        s = ".".join(parts[i:])
+        out.add(s)
+        out.add("." + s)
+    return list(out)
+
+
+async def _load_user_cookies_for(user_id: str, host: str) -> str:
+    """Build the Cookie header value for an upstream request."""
+    if not user_id:
+        return ""
+    domains = _candidate_cookie_domains(host)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cursor = db.proxy_cookies.find(
+        {
+            "user_id": user_id,
+            "domain": {"$in": domains},
+            "$or": [{"expires": None}, {"expires": {"$gt": now_iso}}],
+        },
+        {"_id": 0, "name": 1, "value": 1},
+    )
+    out = []
+    seen = set()
+    async for c in cursor:
+        if c["name"] in seen:
+            continue
+        seen.add(c["name"])
+        out.append(f'{c["name"]}={c["value"]}')
+    return "; ".join(out)
+
+
+def _parse_set_cookie(raw: str, default_host: str):
+    """Best-effort Set-Cookie parser. Returns dict or None."""
+    if not raw or "=" not in raw:
+        return None
+    parts = [p.strip() for p in raw.split(";") if p.strip()]
+    nv = parts[0].split("=", 1)
+    if len(nv) != 2:
+        return None
+    name, value = nv[0].strip(), nv[1].strip()
+    if not name:
+        return None
+    attrs = {}
+    for p in parts[1:]:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            attrs[k.strip().lower()] = v.strip()
+        else:
+            attrs[p.strip().lower()] = True
+    domain = attrs.get("domain") or default_host
+    domain = domain.lower().lstrip(".")
+    expires = None
+    if "max-age" in attrs:
+        try:
+            expires = (datetime.now(timezone.utc) + timedelta(seconds=int(attrs["max-age"]))).isoformat()
+        except Exception:
+            pass
+    elif "expires" in attrs:
+        try:
+            from email.utils import parsedate_to_datetime
+            expires = parsedate_to_datetime(attrs["expires"]).astimezone(timezone.utc).isoformat()
+        except Exception:
+            pass
+    return {
+        "name": name, "value": value, "domain": domain,
+        "path": attrs.get("path", "/"), "expires": expires,
+    }
+
+
+async def _persist_set_cookies(user_id: str, default_host: str, set_cookies: List[str]):
+    if not user_id or not set_cookies:
+        return
+    for raw in set_cookies:
+        c = _parse_set_cookie(raw, default_host)
+        if not c:
+            continue
+        await db.proxy_cookies.update_one(
+            {"user_id": user_id, "domain": c["domain"], "name": c["name"]},
+            {"$set": {**c, "user_id": user_id}},
+            upsert=True,
+        )
+
+
 @app.get("/api/proxy")
-async def proxy(url: str = Query(...)):
+async def proxy(url: str = Query(...), request: Request = None):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    user_id = _decode_session_cookie(request) if request is not None else None
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    request_origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    upstream_cookie = await _load_user_cookies_for(user_id, host) if user_id else ""
+    upstream_headers = {
+        "User-Agent": PROXY_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity",
+        "Referer": request_origin + "/",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+        "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
+    if upstream_cookie:
+        upstream_headers["Cookie"] = upstream_cookie
+
     try:
-        parsed = urlparse(url)
-        request_origin = f"{parsed.scheme}://{parsed.netloc}"
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=25.0,
-            headers={
-                "User-Agent": PROXY_UA,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "identity",
-                "Referer": request_origin + "/",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "Upgrade-Insecure-Requests": "1",
-                "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-            },
+            follow_redirects=True, timeout=25.0, headers=upstream_headers,
         ) as client_:
             r = await client_.get(url)
     except Exception as e:
@@ -691,6 +816,26 @@ async def proxy(url: str = Query(...)):
             f"<h2>Proxy error</h2><p>{type(e).__name__}: {e}</p></body></html>",
             status_code=502,
         )
+
+    # Persist any Set-Cookie headers under the current user (across redirect chain)
+    if user_id:
+        try:
+            collected: List[str] = []
+            for hop in list(r.history) + [r]:
+                hop_host = (urlparse(str(hop.url)).netloc or host).lower()
+                try:
+                    sc = hop.headers.get_list("set-cookie")
+                except Exception:
+                    raw = hop.headers.get("set-cookie")
+                    sc = [raw] if raw else []
+                for raw in sc:
+                    collected.append(f"{hop_host}\n{raw}")
+            # Group by host
+            for entry in collected:
+                hh, _, raw = entry.partition("\n")
+                await _persist_set_cookies(user_id, hh, [raw])
+        except Exception:
+            pass
 
     content_type = r.headers.get("content-type", "application/octet-stream")
     ctype_lc = content_type.lower()
@@ -713,21 +858,24 @@ async def proxy(url: str = Query(...)):
             preview = body.decode(r.encoding or "utf-8", errors="replace")[:300]
         except Exception:
             preview = ""
+        # Same-iframe friendly page — nothing escapes Astra OS
+        retry_url = PROXY_PREFIX + final_url
         friendly = (
             f"<!doctype html><html><head><base href='{request_origin}/'><meta charset='utf-8'>"
-            f"<title>Blocked by {parsed.netloc}</title>"
+            f"<title>{parsed.netloc} · blocked</title>"
             "<style>body{margin:0;background:#0b0b12;color:#e6edff;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}"
-            ".c{max-width:480px;text-align:center}.t{font-size:22px;font-weight:700;margin-bottom:12px}"
+            ".c{max-width:520px;text-align:center}.t{font-size:22px;font-weight:700;margin-bottom:12px;letter-spacing:.3px}"
             ".b{font-size:14px;line-height:1.55;color:#94a3b8;margin-bottom:18px}"
             ".u{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#64748b;margin-bottom:18px;word-break:break-all}"
-            ".btn{display:inline-block;padding:10px 22px;background:#6366f1;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:13px}"
+            ".btn{display:inline-block;padding:10px 22px;background:#6366f1;color:white;text-decoration:none;border:none;cursor:pointer;border-radius:8px;font-weight:600;font-size:13px;font-family:inherit}"
+            ".btn:hover{filter:brightness(1.1)}"
             "</style></head><body><div class='c'>"
             f"<div class='t'>{parsed.netloc} blocked the proxy</div>"
-            "<div class='b'>This site detects and rejects non-browser requests "
-            "(Cloudflare bot challenge, rate limiting, or login wall). "
-            "Open it in your real browser to use it normally.</div>"
+            "<div class='b'>This site challenges automated requests "
+            "(Cloudflare bot check, rate limiting, or login wall). "
+            "Try reloading — or if you've signed in here before, your cookies will carry over next time.</div>"
             f"<div class='u'>HTTP {r.status_code} · {preview}</div>"
-            f"<a class='btn' href='{final_url}' target='_blank' rel='noopener'>Open in real browser →</a>"
+            f"<button class='btn' onclick=\"location.href='{retry_url}'\">Try again</button>"
             "</div></body></html>"
         )
         return Response(
@@ -758,6 +906,13 @@ async def proxy(url: str = Query(...)):
     # Allow embedding in our own origin
     out_headers["access-control-allow-origin"] = "*"
     return Response(content=body, status_code=r.status_code, headers=out_headers)
+
+
+@app.post("/api/proxy/clear-cookies")
+async def proxy_clear_cookies(user: dict = Depends(get_current_user)):
+    """Erase every cookie the proxy has stored for the current user."""
+    res = await db.proxy_cookies.delete_many({"user_id": user["id"]})
+    return {"ok": True, "deleted": res.deleted_count}
 
 
 @app.get("/api/proxy/health")

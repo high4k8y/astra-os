@@ -1,15 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Send, Code2, Wifi, WifiOff } from "lucide-react";
+import { Send, Code2, Wifi, WifiOff, Trash2 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-function wsUrl(token) {
+function wsUrl(token, fp) {
   const base = process.env.REACT_APP_BACKEND_URL || "";
   const proto = base.startsWith("https") ? "wss" : "ws";
   const host = base.replace(/^https?:\/\//, "");
-  return `${proto}://${host}/api/ws/chat?token=${encodeURIComponent(token)}`;
+  const fpPart = fp ? `&fp=${encodeURIComponent(fp)}` : "";
+  return `${proto}://${host}/api/ws/chat?token=${encodeURIComponent(token)}${fpPart}`;
 }
 
 function fmtTime(iso) {
@@ -19,7 +20,7 @@ function fmtTime(iso) {
 }
 
 export default function Chat() {
-  const { token, user } = useAuth();
+  const { token, user, fingerprint } = useAuth();
   const [messages, setMessages] = useState([]);
   const [online, setOnline] = useState([]);
   const [input, setInput] = useState("");
@@ -48,7 +49,7 @@ export default function Chat() {
     let closed = false;
 
     const open = () => {
-      const ws = new WebSocket(wsUrl(token));
+      const ws = new WebSocket(wsUrl(token, fingerprint));
       wsRef.current = ws;
 
       ws.onopen = () => { setStatus("online"); reconnectRef.current = 0; };
@@ -59,6 +60,8 @@ export default function Chat() {
             setMessages((m) => [...m, obj.data]);
           } else if (obj.type === "online") {
             setOnline(obj.users || []);
+          } else if (obj.type === "delete") {
+            setMessages((m) => m.filter((x) => x.id !== obj.id));
           }
         } catch { /* ignore */ }
       };
@@ -77,7 +80,7 @@ export default function Chat() {
       closed = true;
       try { wsRef.current && wsRef.current.close(); } catch {}
     };
-  }, [token]);
+  }, [token, fingerprint]);
 
   // autoscroll
   useEffect(() => {
@@ -90,6 +93,21 @@ export default function Chat() {
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ text }));
     setInput("");
+  };
+
+  const deleteMessage = async (m) => {
+    const mine = m.username === user?.username;
+    if (!mine && !user?.is_dev) return;
+    const label = user?.is_dev && !mine ? `Delete ${m.username}'s message?` : "Delete this message?";
+    if (!window.confirm(label)) return;
+    try {
+      const url = user?.is_dev
+        ? `${API}/admin/chat/${m.id}`
+        : `${API}/chat/messages/${m.id}`;
+      await axios.delete(url, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (e) {
+      window.alert(e.response?.data?.detail || "Failed to delete.");
+    }
   };
 
   return (
@@ -133,6 +151,7 @@ export default function Chat() {
               );
             }
             const mine = m.username === user?.username;
+            const canDelete = mine || user?.is_dev;
             return (
               <div
                 key={m.id}
@@ -143,6 +162,16 @@ export default function Chat() {
                   <span className="ax-chat-msg-name">{m.username}</span>
                   {m.is_dev && <span className="ax-chat-devchip"><Code2 size={9} strokeWidth={2} />dev</span>}
                   <span className="ax-chat-msg-time">{fmtTime(m.ts)}</span>
+                  {canDelete && (
+                    <button
+                      className="ax-chat-msg-del"
+                      onClick={() => deleteMessage(m)}
+                      title={mine ? "Delete your message" : "Delete (admin)"}
+                      data-testid={`chat-msg-del-${m.id}`}
+                    >
+                      <Trash2 size={10} strokeWidth={1.9} />
+                    </button>
+                  )}
                 </div>
                 <div className="ax-chat-msg-text">{m.text}</div>
               </div>

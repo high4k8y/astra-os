@@ -95,6 +95,12 @@ function Shell() {
 
   if (typeof window !== "undefined") window.__astraLaunch = launch;
 
+  const closeAll = useCallback(() => {
+    setWindows([]);
+    setFocusedId(null);
+  }, []);
+  if (typeof window !== "undefined") window.__astraCloseAll = closeAll;
+
   const close = useCallback((id) => {
     setWindows((ws) => ws.filter((w) => w.id !== id));
     setFocusedId((f) => (f === id ? null : f));

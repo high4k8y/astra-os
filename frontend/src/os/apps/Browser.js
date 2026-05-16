@@ -48,6 +48,21 @@ export default function Browser() {
   useEffect(() => { saveBookmarks(bookmarks); }, [bookmarks]);
   useEffect(() => { setUrl(currentUrl); }, [currentUrl]);
 
+  // Listen for admin "navigate" command (set on window by ControlListener)
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== "undefined" && window.__astraNavigate) {
+        const target = window.__astraNavigate;
+        window.__astraNavigate = null;
+        goTo(target);
+      }
+    };
+    check();
+    const id = setInterval(check, 400);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const goTo = (raw, { pushHistory = true } = {}) => {
     const target = resolveTarget(raw);
     if (!target) return;

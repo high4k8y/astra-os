@@ -1350,3 +1350,163 @@ html[data-cursor-mode="glow"] .ax-cursor-dot {
   transition: border-color 0.15s;
 }
 .ax-dev-textarea:focus { border-color: rgba(var(--ax-accent-rgb), 0.55); }
+
+
+/* ====================================================================
+   WEBAPP — chrome-less variant (installed apps run as native OS windows)
+   ==================================================================== */
+.ax-webapp-chromeless { display: flex; flex-direction: column; height: 100%; }
+.ax-webapp-chromeless .ax-webapp-body {
+  flex: 1; position: relative;
+  background: #0b0b12;
+}
+.ax-webapp-chromeless .ax-webapp-body iframe {
+  width: 100%; height: 100%; border: none; display: block;
+  background: #fff;
+}
+.ax-webapp-loading-spinner {
+  width: 22px; height: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--ax-accent);
+  border-radius: 50%;
+  animation: ax-spin 0.7s linear infinite;
+  margin-bottom: 10px;
+}
+@keyframes ax-spin { to { transform: rotate(360deg); } }
+.ax-webapp-overlay {
+  position: absolute; right: 12px; bottom: 12px;
+  display: flex; gap: 6px;
+  opacity: 0; transition: opacity 0.18s;
+  z-index: 5; pointer-events: none;
+}
+.ax-webapp-body:hover .ax-webapp-overlay { opacity: 1; pointer-events: auto; }
+.ax-webapp-overlay button, .ax-webapp-overlay a {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer; text-decoration: none;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s, transform 0.15s;
+}
+.ax-webapp-overlay button:hover, .ax-webapp-overlay a:hover {
+  background: rgba(30, 41, 59, 0.95);
+  transform: translateY(-1px);
+}
+
+/* ====================================================================
+   FULL-SCREEN TAKEOVER (admin remote-control banner)
+   ==================================================================== */
+.ax-takeover {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at center, rgba(239, 68, 68, 0.18), rgba(0, 0, 0, 0.85));
+  backdrop-filter: blur(6px);
+  animation: ax-takeover-in 0.25s ease-out;
+}
+@keyframes ax-takeover-in { from { opacity: 0; } to { opacity: 1; } }
+.ax-takeover-card {
+  max-width: 520px; width: calc(100% - 48px);
+  padding: 32px 36px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.92));
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(239, 68, 68, 0.18), 0 8px 24px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  font-family: var(--ax-font-stack);
+}
+.ax-takeover-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  border-radius: 14px;
+  margin-bottom: 14px;
+}
+.ax-takeover-title {
+  font-size: 18px; font-weight: 700; color: var(--ax-text);
+  margin-bottom: 10px; letter-spacing: 0.3px;
+}
+.ax-takeover-body {
+  font-size: 13.5px; color: var(--ax-text-dim); line-height: 1.55;
+  margin-bottom: 14px; white-space: pre-wrap;
+}
+.ax-takeover-from {
+  font-size: 11px; color: var(--ax-text-mute);
+  font-family: var(--ax-mono); margin-bottom: 18px;
+}
+.ax-takeover-from b { color: #fca5a5; font-weight: 600; }
+.ax-takeover-close {
+  padding: 8px 22px;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  color: #fecaca;
+  border-radius: 8px;
+  font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s;
+}
+.ax-takeover-close:hover { background: rgba(239, 68, 68, 0.3); }
+
+/* ====================================================================
+   CHAT — per-message delete button
+   ==================================================================== */
+.ax-chat-msg-del {
+  margin-left: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  background: transparent;
+  border: none;
+  color: var(--ax-text-mute);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.ax-chat-msg:hover .ax-chat-msg-del { opacity: 0.7; }
+.ax-chat-msg-del:hover { background: rgba(239, 68, 68, 0.18); color: #fca5a5; opacity: 1 !important; }
+
+/* ====================================================================
+   DEV CONSOLE — expandable row + new tags + chat moderation
+   ==================================================================== */
+.ax-dev-row { flex-direction: column; align-items: stretch; }
+.ax-dev-row-main {
+  display: flex; align-items: center; gap: 12px;
+}
+.ax-dev-row.open { background: rgba(99, 102, 241, 0.07); border-color: rgba(99, 102, 241, 0.28); }
+.ax-dev-row .ax-dev-actions {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px dashed var(--ax-border);
+}
+.ax-dev-banchip { white-space: nowrap; }
+
+/* New event tags */
+.ax-dev-evtag-hwban    { background: rgba(220, 38, 38, 0.3); color: #fecaca; }
+.ax-dev-evtag-hwunban  { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.ax-dev-evtag-navigate { background: rgba(14, 165, 233, 0.2); color: #bae6fd; }
+.ax-dev-evtag-closeall { background: rgba(244, 114, 182, 0.18); color: #fbcfe8; }
+.ax-dev-evtag-force_logout { background: rgba(245, 158, 11, 0.22); color: #fde68a; }
+.ax-dev-evtag-takeover { background: rgba(239, 68, 68, 0.22); color: #fecaca; }
+.ax-dev-evtag-chat_delete { background: rgba(168, 85, 247, 0.22); color: #e9d5ff; }
+.ax-dev-evtag-system   { background: rgba(255, 255, 255, 0.08); color: var(--ax-text-mute); }
+.ax-dev-evtag-msg      { background: rgba(99, 102, 241, 0.18); color: #c7d2fe; }
+.ax-dev-evtag-unban    { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+
+/* Chat moderation row (Chat tab) */
+.ax-dev-chatrow {
+  grid-template-columns: 70px 120px 1fr 130px 32px;
+  position: relative;
+}
+.ax-dev-chatrow .ax-dev-evmeta { white-space: pre-wrap; color: var(--ax-text-dim); }
+.ax-dev-chatdel {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ax-text-mute);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.ax-dev-chatdel:hover { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }

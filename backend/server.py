@@ -56,11 +56,13 @@ class RegisterIn(BaseModel):
     username: str = Field(min_length=2, max_length=24)
     password: str = Field(min_length=4, max_length=128)
     dev_code: Optional[str] = None
+    fingerprint: Optional[str] = None
 
 
 class LoginIn(BaseModel):
     username: str
     password: str
+    fingerprint: Optional[str] = None
 
 
 class UserOut(BaseModel):
@@ -128,6 +130,25 @@ async def get_current_user(request: Request) -> dict:
     return user
 
 
+async def _is_fingerprint_banned(fp: Optional[str]) -> bool:
+    if not fp:
+        return False
+    doc = await db.banned_fingerprints.find_one({"fp": fp}, {"_id": 0, "fp": 1})
+    return bool(doc)
+
+
+async def _remember_fingerprint(user_id: str, fp: Optional[str]):
+    if not fp:
+        return
+    try:
+        await db.users.update_one(
+            {"id": user_id},
+            {"$addToSet": {"fingerprints": fp}, "$set": {"last_fingerprint": fp}},
+        )
+    except Exception:
+        pass
+
+
 def user_to_out(u: dict) -> UserOut:
     return UserOut(
         id=u["id"],
@@ -144,6 +165,8 @@ async def register(payload: RegisterIn):
     uname = payload.username.strip()
     if not re.fullmatch(r"[A-Za-z0-9_\-]{2,24}", uname):
         raise HTTPException(status_code=400, detail="Username may use letters, numbers, _ or - (2-24 chars).")
+    if await _is_fingerprint_banned(payload.fingerprint):
+        raise HTTPException(status_code=403, detail="This device has been banned from Astra OS.")
     existing = await db.users.find_one({"username_lower": uname.lower()})
     if existing:
         raise HTTPException(status_code=409, detail="Username already taken.")
@@ -161,13 +184,15 @@ async def register(payload: RegisterIn):
         "password_hash": hash_password(payload.password),
         "is_dev": is_dev,
         "is_banned": False,
+        "fingerprints": [payload.fingerprint] if payload.fingerprint else [],
+        "last_fingerprint": payload.fingerprint or None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(user)
     safe = {k: v for k, v in user.items() if k != "password_hash"}
     token = create_token(user["id"], user["username"], is_dev)
     # Audit + broadcast a chat "joined" announcement (only on REGISTRATION, not on WS connect)
-    await _log_event("register", user_id=user["id"], username=uname, meta={"is_dev": is_dev})
+    await _log_event("register", user_id=user["id"], username=uname, meta={"is_dev": is_dev, "fp": payload.fingerprint or ""})
     try:
         join_doc = _msg_doc("system", f"{uname} joined Astra")
         await _save_and_broadcast(join_doc)
@@ -183,8 +208,11 @@ async def login(payload: LoginIn):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     if u.get("is_banned"):
         raise HTTPException(status_code=403, detail="This account has been banned.")
+    if await _is_fingerprint_banned(payload.fingerprint):
+        raise HTTPException(status_code=403, detail="This device has been banned from Astra OS.")
+    await _remember_fingerprint(u["id"], payload.fingerprint)
     token = create_token(u["id"], u["username"], bool(u.get("is_dev", False)))
-    await _log_event("login", user_id=u["id"], username=u["username"])
+    await _log_event("login", user_id=u["id"], username=u["username"], meta={"fp": payload.fingerprint or ""})
     return AuthOut(token=token, user=user_to_out(u))
 
 
@@ -324,7 +352,7 @@ async def chat_online(user: dict = Depends(get_current_user)):
 
 
 @app.websocket("/api/ws/chat")
-async def ws_chat(websocket: WebSocket, token: str = Query(...)):
+async def ws_chat(websocket: WebSocket, token: str = Query(...), fp: Optional[str] = Query(None)):
     try:
         payload = decode_token(token)
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
@@ -334,6 +362,11 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...)):
         if user.get("is_banned"):
             await websocket.close(code=4003)
             return
+        if await _is_fingerprint_banned(fp):
+            await websocket.close(code=4003)
+            return
+        if fp:
+            await _remember_fingerprint(user["id"], fp)
     except Exception:
         await websocket.close(code=4401)
         return
@@ -503,6 +536,16 @@ class LaunchIn(BaseModel):
     app: str = Field(min_length=1, max_length=64)
 
 
+class NavigateIn(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class TakeoverIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    body: str = Field(min_length=1, max_length=600)
+    duration_ms: int = Field(default=6000, ge=500, le=120000)
+
+
 @api_router.get("/admin/users")
 async def admin_users(_: dict = Depends(get_dev_user)):
     rows = await db.users.find(
@@ -567,6 +610,116 @@ async def admin_launch(user_id: str, payload: LaunchIn, dev: dict = Depends(get_
     })
     await _log_event("launch", user_id=user_id, meta={"by": dev["username"], "app": payload.app})
     return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/navigate")
+async def admin_navigate(user_id: str, payload: NavigateIn, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {
+        "type": "navigate",
+        "url": payload.url,
+        "from": dev["username"],
+    })
+    await _log_event("navigate", user_id=user_id, meta={"by": dev["username"], "url": payload.url})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/closeall")
+async def admin_closeall(user_id: str, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {"type": "closeall", "from": dev["username"]})
+    await _log_event("closeall", user_id=user_id, meta={"by": dev["username"]})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/logout")
+async def admin_force_logout(user_id: str, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {"type": "force_logout", "from": dev["username"]})
+    await _log_event("force_logout", user_id=user_id, meta={"by": dev["username"]})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/takeover")
+async def admin_takeover(user_id: str, payload: TakeoverIn, dev: dict = Depends(get_dev_user)):
+    sent = await manager.send_to_user(user_id, {
+        "type": "takeover",
+        "title": payload.title,
+        "body": payload.body,
+        "duration_ms": payload.duration_ms,
+        "from": dev["username"],
+    })
+    await _log_event("takeover", user_id=user_id, meta={"by": dev["username"], "title": payload.title})
+    return {"ok": True, "sent": sent}
+
+
+@api_router.post("/admin/users/{user_id}/hwban")
+async def admin_hwban(user_id: str, payload: BanIn, dev: dict = Depends(get_dev_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "is_dev": 1, "fingerprints": 1, "last_fingerprint": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.get("is_dev"):
+        raise HTTPException(status_code=400, detail="Cannot hardware-ban a developer account.")
+    fps = list(target.get("fingerprints") or [])
+    if target.get("last_fingerprint") and target["last_fingerprint"] not in fps:
+        fps.append(target["last_fingerprint"])
+    fps = [f for f in fps if f]
+    if not fps:
+        raise HTTPException(status_code=400, detail="No device fingerprint recorded for this user yet.")
+    now = datetime.now(timezone.utc).isoformat()
+    for fp in fps:
+        await db.banned_fingerprints.update_one(
+            {"fp": fp},
+            {"$set": {"fp": fp, "username": target["username"], "user_id": user_id, "reason": payload.reason or "", "by": dev["username"], "ts": now}},
+            upsert=True,
+        )
+    await db.users.update_one({"id": user_id}, {"$set": {"is_banned": True, "ban_reason": payload.reason or "", "hw_banned": True}})
+    await _log_event("hwban", user_id=user_id, username=target["username"], meta={"by": dev["username"], "reason": payload.reason or "", "fp_count": len(fps)})
+    kicked = await manager.kick_user(user_id)
+    await manager.broadcast({"type": "online", "users": manager.online_users()})
+    return {"ok": True, "kicked": kicked, "fingerprints_banned": len(fps)}
+
+
+@api_router.post("/admin/users/{user_id}/hwunban")
+async def admin_hwunban(user_id: str, dev: dict = Depends(get_dev_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "fingerprints": 1, "last_fingerprint": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    fps = list(target.get("fingerprints") or [])
+    if target.get("last_fingerprint") and target["last_fingerprint"] not in fps:
+        fps.append(target["last_fingerprint"])
+    fps = [f for f in fps if f]
+    if fps:
+        await db.banned_fingerprints.delete_many({"fp": {"$in": fps}})
+    await db.users.update_one({"id": user_id}, {"$set": {"is_banned": False, "hw_banned": False}, "$unset": {"ban_reason": ""}})
+    await _log_event("hwunban", user_id=user_id, username=target["username"], meta={"by": dev["username"], "fp_count": len(fps)})
+    return {"ok": True, "fingerprints_unbanned": len(fps)}
+
+
+@api_router.get("/admin/chat/recent")
+async def admin_chat_recent(limit: int = 100, _: dict = Depends(get_dev_user)):
+    cursor = db.chat_messages.find({}, {"_id": 0}).sort("ts", -1).limit(min(max(limit, 1), 500))
+    items = await cursor.to_list(length=limit)
+    return {"messages": items}
+
+
+@api_router.delete("/admin/chat/{message_id}")
+async def admin_delete_message(message_id: str, dev: dict = Depends(get_dev_user)):
+    res = await db.chat_messages.delete_one({"id": message_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    await manager.broadcast({"type": "delete", "id": message_id, "by": dev["username"]})
+    await _log_event("chat_delete", username=dev["username"], meta={"id": message_id})
+    return {"ok": True}
+
+
+@api_router.delete("/chat/messages/{message_id}")
+async def delete_own_message(message_id: str, user: dict = Depends(get_current_user)):
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0, "username": 1, "kind": 1})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if msg.get("kind") != "msg" or msg.get("username") != user["username"]:
+        raise HTTPException(status_code=403, detail="You can only delete your own messages.")
+    await db.chat_messages.delete_one({"id": message_id})
+    await manager.broadcast({"type": "delete", "id": message_id, "by": user["username"]})
+    return {"ok": True}
 
 
 @api_router.post("/admin/broadcast")

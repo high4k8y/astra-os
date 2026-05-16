@@ -1,87 +1,86 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, RotateCw } from "lucide-react";
+import { ExternalLink, RotateCw, Zap } from "lucide-react";
 
 const PROXY = `${process.env.REACT_APP_BACKEND_URL || ""}/api/proxy?url=`;
 
 /**
- * WebApp — a chrome-less app container for installed third-party apps.
+ * WebApp — chrome-less container for installed third-party apps.
  *
- * Apps run as if they were native OS apps:
- *   - No browser-like URL bar / back-forward buttons
- *   - Loads use the strategy from the catalog entry (mode):
- *       direct  → iframe straight to the URL
- *       proxy   → iframe via /api/proxy (header-stripping rewriter)
- *       embed   → iframe via service-specific embed URL
- *       fallback→ never iframe; show "open in real browser" card
- *       auto    → try direct first; on timeout switch to proxy; then fallback
- *   - Minimal floating overlay (reload + external link) — only visible on hover.
+ * Loading strategies (per-app `mode`):
+ *   "proxy"    — route through /api/proxy (default; rewrites assets, fetch, XHR, srcset, CSS url())
+ *   "embed"    — service-specific embed URL (e.g. YouTube nocookie / Spotify embed)
+ *   "direct"   — straight iframe to the URL (only works for sites without X-Frame-Options)
+ *   "fallback" — show "open in real browser" card immediately
+ *
+ * If the chosen mode takes too long, escalate: direct → proxy → fallback, proxy → fallback.
+ * The hover overlay exposes Reload + Direct/Proxy toggle + Open-in-real-browser.
  */
-export default function WebApp({ app, onClose }) {
-  const initialMode = app.mode === "auto" || !app.mode ? "auto" : app.mode;
-  const [activeMode, setActiveMode] = useState(initialMode);   // direct | proxy | embed | fallback | auto
+export default function WebApp({ app }) {
+  const declared = app.mode || "proxy";
+  const [mode, setMode] = useState(declared);
   const [src, setSrc] = useState("");
   const [loading, setLoading] = useState(true);
   const [showFallback, setShowFallback] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const iframeRef = useRef(null);
-  const triedRef = useRef({ direct: false, proxy: false });
+  const triedProxyRef = useRef(false);
 
+  // Compute the iframe src for the active mode
   const targetSrc = useMemo(() => {
-    if (activeMode === "embed" && app.embed) return app.embed;
-    if (activeMode === "proxy") return PROXY + encodeURIComponent(app.url);
-    if (activeMode === "direct") return app.url;
+    if (mode === "embed" && app.embed) return app.embed;
+    if (mode === "direct") return app.url;
+    if (mode === "proxy") return PROXY + encodeURIComponent(app.url);
     return "";
-  }, [activeMode, app.url, app.embed]);
+  }, [mode, app.url, app.embed]);
 
-  // Reset whenever the app changes
+  // Reset when the app or declared mode changes
   useEffect(() => {
-    triedRef.current = { direct: false, proxy: false };
-    setActiveMode(app.mode === "auto" || !app.mode ? "auto" : app.mode);
+    triedProxyRef.current = false;
+    setMode(declared);
     setShowFallback(false);
     setLoading(true);
     setReloadKey((k) => k + 1);
-  }, [app.id, app.url, app.mode]);
+  }, [app.id, app.url, declared]);
 
-  // Resolve "auto" → try direct first
+  // Sync src to active target / show fallback for fallback-mode apps
   useEffect(() => {
-    if (activeMode === "auto") {
-      triedRef.current.direct = true;
-      setActiveMode("direct");
-    } else if (activeMode === "fallback") {
+    if (mode === "fallback") {
       setShowFallback(true);
       setLoading(false);
+      setSrc("");
     } else {
       setSrc(targetSrc);
     }
-  }, [activeMode, targetSrc]);
+  }, [mode, targetSrc]);
 
-  // Loading timeout — if direct fails (CSP block) try proxy then fallback
+  // Escalate on timeout (direct → proxy → fallback; proxy → fallback)
   useEffect(() => {
-    if (!loading || activeMode === "fallback") return;
+    if (!loading || mode === "fallback") return;
+    const ms = mode === "direct" ? 5000 : 12000;
     const id = setTimeout(() => {
       if (!loading) return;
-      // Step down: direct -> proxy -> fallback
-      if (activeMode === "direct" && !triedRef.current.proxy) {
-        triedRef.current.proxy = true;
-        setActiveMode("proxy");
+      if (mode === "direct" && !triedProxyRef.current) {
+        triedProxyRef.current = true;
+        setMode("proxy");
         setLoading(true);
         return;
       }
-      if (activeMode === "proxy") {
-        setShowFallback(true);
-        return;
-      }
-      // embed/proxy timed out without an alternative path
       setShowFallback(true);
-    }, activeMode === "direct" ? 4500 : 9000);
+    }, ms);
     return () => clearTimeout(id);
-  }, [loading, activeMode, reloadKey]);
+  }, [loading, mode, reloadKey]);
 
   const reload = () => {
-    triedRef.current = { direct: false, proxy: false };
+    triedProxyRef.current = false;
     setShowFallback(false);
     setLoading(true);
-    setActiveMode(app.mode === "auto" || !app.mode ? "auto" : app.mode);
+    setMode(declared);
+    setReloadKey((k) => k + 1);
+  };
+
+  const toggleMode = () => {
+    setShowFallback(false);
+    setLoading(true);
+    setMode((m) => (m === "direct" ? "proxy" : "direct"));
     setReloadKey((k) => k + 1);
   };
 
@@ -90,8 +89,7 @@ export default function WebApp({ app, onClose }) {
       <div className="ax-webapp-body">
         {src && !showFallback ? (
           <iframe
-            key={reloadKey + ":" + activeMode}
-            ref={iframeRef}
+            key={reloadKey + ":" + mode}
             src={src}
             title={app.name}
             sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads"
@@ -105,7 +103,7 @@ export default function WebApp({ app, onClose }) {
         {loading && !showFallback && (
           <div className="ax-webapp-loading" data-testid={`webapp-${app.id}-loading`}>
             <div className="ax-webapp-loading-spinner" />
-            <div>connecting to <b>{app.name}</b>…</div>
+            <div>connecting to <b>{app.name}</b>… <span className="ax-webapp-loading-mode">via {mode}</span></div>
           </div>
         )}
 
@@ -115,8 +113,9 @@ export default function WebApp({ app, onClose }) {
               <div className="ax-webapp-fallback-icon" style={{ background: app.color }}>{app.emoji}</div>
               <div className="ax-webapp-fallback-title">{app.name}</div>
               <div className="ax-webapp-fallback-text">
-                {app.name} can't run inside Astra OS because it blocks embedding (cookies, login, JS APIs).
-                Open it in your real browser — your Astra session keeps running here.
+                {app.name} won't load through the proxy — it likely requires a real login session,
+                browser cookies, or WebSocket connections that the proxy can't replay.
+                Open it in your real browser to use it normally.
               </div>
               <a
                 className="ax-webapp-fallback-btn"
@@ -139,6 +138,11 @@ export default function WebApp({ app, onClose }) {
             <button onClick={reload} title="Reload" data-testid={`webapp-${app.id}-reload`}>
               <RotateCw size={13} strokeWidth={1.8} />
             </button>
+            {mode !== "embed" && (
+              <button onClick={toggleMode} title={`Switch to ${mode === "direct" ? "proxy" : "direct"} mode`} data-testid={`webapp-${app.id}-togglemode`}>
+                <Zap size={13} strokeWidth={1.8} style={{ opacity: mode === "direct" ? 1 : 0.6 }} />
+              </button>
+            )}
             <a href={app.url} target="_blank" rel="noopener noreferrer" title="Open in real browser" data-testid={`webapp-${app.id}-extopen`}>
               <ExternalLink size={13} strokeWidth={1.8} />
             </a>

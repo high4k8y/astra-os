@@ -1,0 +1,33 @@
+{
+  "summary": "Verified the new proxy + WebApp loading strategy. Backend (8/8 pytest) — proxy returns 200 with <base> tag and JS shim ('astra-proxy', XMLHttpRequest.prototype.open, window.fetch) injected for example.com / DuckDuckGo / Hacker News (>=3 wrapped URLs) / MDN / GitHub; Wikipedia returns the friendly bot-block landing page (200 with 'blocked the proxy' + 'Open in real browser' + original URL); CSS rewriting (Google Fonts) returns text/css with url(\"/api/proxy?url=...\") rewrites. Frontend Playwright (8/8) — registered fresh user, installed HN/DDG/Discord from Store via desktop-icon-Store, then desktop-app-hn loads with direct src (https://news.ycombinator.com), desktop-app-ddg loads with proxy src (/api/proxy?url=https%3A%2F%2Fduckduckgo.com), .ax-webapp-bar count = 0 (chrome-less), overlay reveals reload/togglemode/extopen buttons, togglemode swaps src from proxied to direct, Discord renders webapp-discord-fallback with no iframe.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_proxy.py",
+    "/app/test_reports/pytest/proxy_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1039 lines (proxy + auth + chat + admin in one file). The proxy block alone is ~330 lines and worth its own module/router (e.g. backend/proxy.py with /api/proxy + helpers).",
+    "/api/proxy still accepts arbitrary URLs without auth — same SSRF/abuse risk flagged in iteration_1. Should at minimum (a) require Bearer token, (b) block private/loopback/link-local IPs after DNS resolution, (c) cap response size.",
+    "JS shim replaces window.WebSocket with a function whose .prototype is assigned AFTER construction — this still throws on `new WebSocket(...)` (intended) but breaks code that does `WebSocket.OPEN` constant access. Minor; could expose the original constants for compatibility.",
+    "_rewrite_html regexes don't handle attributes split across lines or with single quotes inside double quotes (e.g. action=\"foo'bar\"). Rare but worth a comment.",
+    "The bot-block heuristic uses `len(body) < 1500` for 401/403/429 — Wikipedia's 403 happens to be ~1.1KB so it works, but a larger custom 403 page would skip the friendly branch. Consider always wrapping 401/403/429 regardless of size.",
+    "is_blocked second branch triggers on `len(body) < 800` AND 'cloudflare'/'robot policy'/'access denied' — but on a successful response that's < 800 bytes and happens to contain the word 'cloudflare' (e.g. a CDN-served small fragment) it would also trigger. Tighten by also gating on status_code != 200."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_proxy.py (new)",
+    "/app/backend/tests/conftest.py (added .env loader so REACT_APP_BACKEND_URL is picked up)"
+  ],
+  "success_rate": {"backend": "100% (8/8 pytest)", "frontend": "100% (8/8 Playwright assertions: hn_iframe_present, hn_direct_mode, ddg_iframe_present, ddg_proxy_mode, chromeless, ddg_overlay_buttons, ddg_toggle_changes_src, discord_fallback_only)"},
+  "test_credentials": "Test user is registered fresh per run (TEST_<random>/Pass1234!). No fixed creds required. Dev code 201167 not used this iteration.",
+  "seed_data_creation": "Each run registers one TEST_<random> user; no other seed data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend proxy tests: pytest /app/backend/tests/test_proxy.py -v. They depend on conftest.py loading /app/frontend/.env for REACT_APP_BACKEND_URL. Wikipedia bot-block fallback observed working live (curl confirms 'blocked the proxy' + 'Open in real browser' strings). Frontend test installs HN/DDG/Discord from the Store and double-clicks desktop-app-<id> icons; the .ax-webapp-bar element is intentionally removed (chrome-less) — overlay buttons appear on hover only.",
+  "rca of the issue": "n/a — no regressions found. New proxy + WebApp routing all working as designed."
+}

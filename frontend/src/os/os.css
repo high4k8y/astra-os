@@ -1373,6 +1373,14 @@ html[data-cursor-mode="glow"] .ax-cursor-dot {
   margin-bottom: 10px;
 }
 @keyframes ax-spin { to { transform: rotate(360deg); } }
+.ax-webapp-loading-mode {
+  display: inline-block; margin-left: 6px;
+  padding: 1px 7px; border-radius: 4px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #c7d2fe;
+  font-size: 10px; font-family: var(--ax-mono);
+  text-transform: uppercase; letter-spacing: 0.6px;
+}
 .ax-webapp-overlay {
   position: absolute; right: 12px; bottom: 12px;
   display: flex; gap: 6px;

@@ -431,41 +431,234 @@ BLOCKED_RESPONSE_HEADERS = {
     "cross-origin-opener-policy", "cross-origin-embedder-policy",
     "cross-origin-resource-policy", "permissions-policy", "feature-policy",
     "strict-transport-security", "transfer-encoding", "content-encoding",
-    "content-length", "connection",
+    "content-length", "connection", "referrer-policy",
+    "x-content-type-options", "report-to", "expect-ct", "nel",
+    "alt-svc", "set-cookie",  # cookies for foreign origins break iframe sandbox anyway
 }
 PROXY_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+PROXY_PREFIX = "/api/proxy?url="
 
 
-def _rewrite_html(html: str, base_url: str, proxy_prefix: str) -> str:
+def _abs_or_skip(raw: str, base_url: str) -> Optional[str]:
+    """Return absolute http(s) URL or None if this looks like a non-network ref."""
+    if not raw:
+        return None
+    s = raw.strip().strip('"\'')
+    if (not s
+            or s.startswith("#")
+            or s.startswith("javascript:")
+            or s.startswith("mailto:")
+            or s.startswith("tel:")
+            or s.startswith("data:")
+            or s.startswith("blob:")
+            or s.startswith("about:")
+            or s.startswith("ws:") or s.startswith("wss:")):
+        return None
+    try:
+        abs_ = urljoin(base_url, s)
+    except Exception:
+        return None
+    if not abs_.startswith(("http://", "https://")):
+        return None
+    return abs_
+
+
+def _wrap(abs_url: str) -> str:
+    from urllib.parse import quote
+    return PROXY_PREFIX + quote(abs_url, safe="")
+
+
+def _rewrite_css(css: str, base_url: str) -> str:
+    """Rewrite url(...) and @import inside CSS."""
+    def repl_url(m):
+        inner = m.group(1)
+        abs_ = _abs_or_skip(inner, base_url)
+        return f'url("{_wrap(abs_)}")' if abs_ else m.group(0)
+
+    css = re.sub(r"url\(\s*([^)]+?)\s*\)", repl_url, css, flags=re.IGNORECASE)
+
+    def repl_import(m):
+        inner = m.group(1)
+        abs_ = _abs_or_skip(inner, base_url)
+        return f'@import "{_wrap(abs_)}"' if abs_ else m.group(0)
+
+    css = re.sub(r"@import\s+(?:url\(\s*)?[\"']?([^\"')]+)[\"']?\s*\)?", repl_import, css, flags=re.IGNORECASE)
+    return css
+
+
+def _rewrite_srcset(value: str, base_url: str) -> str:
+    """Rewrite a srcset attribute value (comma-separated `url descriptor` pairs)."""
+    out = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split(None, 1)
+        u = bits[0]
+        descriptor = (" " + bits[1]) if len(bits) > 1 else ""
+        abs_ = _abs_or_skip(u, base_url)
+        out.append((_wrap(abs_) if abs_ else u) + descriptor)
+    return ", ".join(out)
+
+
+JS_SHIM_TEMPLATE = """
+<script>(function(){
+  var PFX='%(prefix)s';
+  var ORIGIN='%(origin)s';
+  function abs(u){ try { return new URL(u, ORIGIN).toString(); } catch(e){ return null; } }
+  function wrap(u){
+    if (u==null) return u;
+    if (typeof u !== 'string') return u;
+    if (!u || u.indexOf(PFX)===0) return u;
+    var lo = u.toLowerCase();
+    if (lo.indexOf('data:')===0 || lo.indexOf('blob:')===0 || lo.indexOf('javascript:')===0
+        || lo.indexOf('about:')===0 || lo.indexOf('#')===0
+        || lo.indexOf('ws:')===0 || lo.indexOf('wss:')===0
+        || lo.indexOf('mailto:')===0 || lo.indexOf('tel:')===0) return u;
+    var a = abs(u);
+    if (!a) return u;
+    if (!/^https?:\\/\\//i.test(a)) return u;
+    return PFX + encodeURIComponent(a);
+  }
+  // fetch
+  if (window.fetch) {
+    var _f = window.fetch.bind(window);
+    window.fetch = function(input, init){
+      try {
+        if (typeof input === 'string') return _f(wrap(input), init);
+        if (input && input.url) return _f(new Request(wrap(input.url), input), init);
+      } catch(e) {}
+      return _f(input, init);
+    };
+  }
+  // XHR
+  var _xhrOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(m, u){
+    try { u = wrap(u); } catch(e){}
+    var args = [m, u].concat(Array.prototype.slice.call(arguments, 2));
+    return _xhrOpen.apply(this, args);
+  };
+  // Image / Audio / Video / Script / Link src setters
+  ['HTMLImageElement','HTMLScriptElement','HTMLIFrameElement','HTMLMediaElement','HTMLSourceElement','HTMLEmbedElement','HTMLObjectElement'].forEach(function(tag){
+    try {
+      var proto = window[tag] && window[tag].prototype;
+      if (!proto) return;
+      ['src','data'].forEach(function(prop){
+        var d = Object.getOwnPropertyDescriptor(proto, prop);
+        if (!d || !d.set) return;
+        Object.defineProperty(proto, prop, {
+          configurable: true, enumerable: true,
+          get: d.get,
+          set: function(v){ d.set.call(this, wrap(v)); }
+        });
+      });
+    } catch(e){}
+  });
+  // Anchor.href clicks: rewrite when set after parse
+  try {
+    var hd = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
+    if (hd && hd.set) {
+      Object.defineProperty(HTMLAnchorElement.prototype, 'href', {
+        configurable: true, enumerable: true,
+        get: hd.get,
+        set: function(v){ hd.set.call(this, wrap(v)); }
+      });
+    }
+  } catch(e){}
+  // window.open: keep popups inside the proxied frame
+  if (window.open) {
+    var _o = window.open;
+    window.open = function(u, t, f){ try { u = wrap(u); } catch(e){} return _o.call(window, u, t, f); };
+  }
+  // Form submissions
+  document.addEventListener('submit', function(ev){
+    try {
+      var f = ev.target;
+      if (f && f.tagName === 'FORM' && f.action) f.action = wrap(f.action);
+    } catch(e){}
+  }, true);
+  // WebSocket — best-effort: block (most cross-origin WS will fail anyway)
+  try {
+    var _WS = window.WebSocket;
+    window.WebSocket = function(u, p){ console.warn('[astra-proxy] WebSocket blocked:', u); throw new Error('WebSocket disabled inside Astra proxy'); };
+    window.WebSocket.prototype = _WS && _WS.prototype;
+  } catch(e){}
+})();</script>
+"""
+
+
+def _rewrite_html(html: str, base_url: str) -> str:
     parsed = urlparse(base_url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
 
     def rewrite_attr(match):
         attr = match.group(1)
-        quote = match.group(2)
-        url = match.group(3).strip()
-        if (
-            not url
-            or url.startswith("#") or url.startswith("javascript:")
-            or url.startswith("mailto:") or url.startswith("data:")
-            or url.startswith("blob:")
-        ):
+        quote_c = match.group(2)
+        raw_url = match.group(3)
+        abs_ = _abs_or_skip(raw_url, base_url)
+        if not abs_:
             return match.group(0)
-        absolute = urljoin(base_url, url)
-        return f'{attr}={quote}{proxy_prefix}{absolute}{quote}'
+        return f'{attr}={quote_c}{_wrap(abs_)}{quote_c}'
 
+    # href/src/action/poster/formaction/data/cite — common URL-bearing attrs
     html = re.sub(
-        r'(href|src|action)=(["\'])(.*?)\2', rewrite_attr, html, flags=re.IGNORECASE
+        r'(href|src|action|poster|formaction|data|cite|background)=(["\'])(.*?)\2',
+        rewrite_attr, html, flags=re.IGNORECASE,
     )
+
+    # srcset
+    def rewrite_srcset(m):
+        return f'srcset={m.group(1)}{_rewrite_srcset(m.group(2), base_url)}{m.group(1)}'
+    html = re.sub(r'srcset=(["\'])(.*?)\1', rewrite_srcset, html, flags=re.IGNORECASE)
+
+    # inline style="...url(...)..."
+    def rewrite_inline_style(m):
+        full = m.group(0)
+        inner = m.group(2)
+        return full.replace(inner, _rewrite_css(inner, base_url))
+    html = re.sub(r'style=(["\'])(.*?)\1', rewrite_inline_style, html, flags=re.IGNORECASE | re.DOTALL)
+
+    # <style>...</style> blocks
+    def rewrite_style_block(m):
+        return f"<style{m.group(1)}>{_rewrite_css(m.group(2), base_url)}</style>"
+    html = re.sub(r'<style([^>]*)>(.*?)</style>', rewrite_style_block, html, flags=re.IGNORECASE | re.DOTALL)
+
+    # <meta http-equiv="refresh" content="0;url=..."> — rewrite the URL
+    def rewrite_meta_refresh(m):
+        content = m.group(2)
+        new_content = re.sub(
+            r"(url\s*=\s*)(['\"]?)([^'\";>]+)\2",
+            lambda mm: f"{mm.group(1)}{mm.group(2)}{_wrap(_abs_or_skip(mm.group(3), base_url) or mm.group(3))}{mm.group(2)}",
+            content, flags=re.IGNORECASE,
+        )
+        return m.group(0).replace(content, new_content)
+    html = re.sub(
+        r'(<meta[^>]+http-equiv=["\']refresh["\'][^>]+content=["\'])([^"\']+)(["\'])',
+        rewrite_meta_refresh, html, flags=re.IGNORECASE,
+    )
+
+    # Inject JS shim + <base> right after <head>
+    shim = JS_SHIM_TEMPLATE % {"prefix": PROXY_PREFIX, "origin": origin}
     base_tag = f'<base href="{origin}/">'
-    if "<head" in html.lower():
-        html = re.sub(r"(<head[^>]*>)", r"\1" + base_tag, html, count=1, flags=re.IGNORECASE)
+    head_match = re.search(r"<head[^>]*>", html, flags=re.IGNORECASE)
+    if head_match:
+        idx = head_match.end()
+        html = html[:idx] + base_tag + shim + html[idx:]
     else:
-        html = base_tag + html
+        html = "<!doctype html><html><head>" + base_tag + shim + "</head>" + html
     return html
+
+
+def _strip_block_headers(src: dict) -> dict:
+    out = {}
+    for k, v in src.items():
+        if k.lower() in BLOCKED_RESPONSE_HEADERS:
+            continue
+        out[k] = v
+    return out
 
 
 @app.get("/api/proxy")
@@ -473,9 +666,23 @@ async def proxy(url: str = Query(...)):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
+        parsed = urlparse(url)
+        request_origin = f"{parsed.scheme}://{parsed.netloc}"
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=20.0,
-            headers={"User-Agent": PROXY_UA, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9"},
+            follow_redirects=True, timeout=25.0,
+            headers={
+                "User-Agent": PROXY_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "identity",
+                "Referer": request_origin + "/",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Upgrade-Insecure-Requests": "1",
+                "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+            },
         ) as client_:
             r = await client_.get(url)
     except Exception as e:
@@ -486,24 +693,70 @@ async def proxy(url: str = Query(...)):
         )
 
     content_type = r.headers.get("content-type", "application/octet-stream")
+    ctype_lc = content_type.lower()
     body = r.content
-    proxy_prefix = "/api/proxy?url="
+    final_url = str(r.url)
 
-    if "text/html" in content_type.lower():
+    # Detect bot-blocked / anti-scraping responses and surface a friendly page
+    is_blocked = False
+    if r.status_code in (401, 403, 429) and len(body) < 1500:
+        is_blocked = True
+    elif len(body) < 800:
+        try:
+            if any(s in body.lower() for s in (b"robot policy", b"cloudflare", b"access denied")):
+                is_blocked = True
+        except Exception:
+            pass
+
+    if is_blocked:
+        try:
+            preview = body.decode(r.encoding or "utf-8", errors="replace")[:300]
+        except Exception:
+            preview = ""
+        friendly = (
+            f"<!doctype html><html><head><base href='{request_origin}/'><meta charset='utf-8'>"
+            f"<title>Blocked by {parsed.netloc}</title>"
+            "<style>body{margin:0;background:#0b0b12;color:#e6edff;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}"
+            ".c{max-width:480px;text-align:center}.t{font-size:22px;font-weight:700;margin-bottom:12px}"
+            ".b{font-size:14px;line-height:1.55;color:#94a3b8;margin-bottom:18px}"
+            ".u{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#64748b;margin-bottom:18px;word-break:break-all}"
+            ".btn{display:inline-block;padding:10px 22px;background:#6366f1;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:13px}"
+            "</style></head><body><div class='c'>"
+            f"<div class='t'>{parsed.netloc} blocked the proxy</div>"
+            "<div class='b'>This site detects and rejects non-browser requests "
+            "(Cloudflare bot challenge, rate limiting, or login wall). "
+            "Open it in your real browser to use it normally.</div>"
+            f"<div class='u'>HTTP {r.status_code} · {preview}</div>"
+            f"<a class='btn' href='{final_url}' target='_blank' rel='noopener'>Open in real browser →</a>"
+            "</div></body></html>"
+        )
+        return Response(
+            content=friendly.encode("utf-8"),
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8", "access-control-allow-origin": "*"},
+        )
+
+    if "text/html" in ctype_lc:
         try:
             html = body.decode(r.encoding or "utf-8", errors="replace")
         except Exception:
             html = body.decode("utf-8", errors="replace")
-        html = _rewrite_html(html, str(r.url), proxy_prefix)
+        html = _rewrite_html(html, final_url)
         body = html.encode("utf-8")
         content_type = "text/html; charset=utf-8"
+    elif "text/css" in ctype_lc:
+        try:
+            css = body.decode(r.encoding or "utf-8", errors="replace")
+        except Exception:
+            css = body.decode("utf-8", errors="replace")
+        css = _rewrite_css(css, final_url)
+        body = css.encode("utf-8")
+        content_type = "text/css; charset=utf-8"
 
-    out_headers = {}
-    for k, v in r.headers.items():
-        if k.lower() in BLOCKED_RESPONSE_HEADERS:
-            continue
-        out_headers[k] = v
+    out_headers = _strip_block_headers(dict(r.headers))
     out_headers["content-type"] = content_type
+    # Allow embedding in our own origin
+    out_headers["access-control-allow-origin"] = "*"
     return Response(content=body, status_code=r.status_code, headers=out_headers)
 
 

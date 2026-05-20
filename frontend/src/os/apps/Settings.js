@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
 import { useSettings } from "../SettingsContext";
 import { useAuth } from "../../auth/AuthContext";
 import { LogOut, Code2 } from "lucide-react";
@@ -30,14 +31,62 @@ const TABS = [
   { id: "appearance", label: "Appearance" },
   { id: "wallpaper",  label: "Wallpaper" },
   { id: "display",    label: "Display" },
+  { id: "profile",    label: "Profile" },
   { id: "account",    label: "Account" },
   { id: "system",     label: "System" },
 ];
 
 export default function Settings() {
   const { settings, update, reset } = useSettings();
-  const { user, logout } = useAuth();
+  const { user, token, logout, refreshMe } = useAuth();
   const [tab, setTab] = useState("appearance");
+  const [profileForm, setProfileForm] = useState({
+    username: user?.username || "",
+    profile_emoji: user?.profile_emoji || "◇",
+    profile_color: user?.profile_color || "#6366f1",
+    profile_bio: user?.profile_bio || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+  React.useEffect(() => {
+    if (!user) return;
+    setProfileForm({
+      username: user.username || "",
+      profile_emoji: user.profile_emoji || "◇",
+      profile_color: user.profile_color || "#6366f1",
+      profile_bio: user.profile_bio || "",
+    });
+  }, [user]);
+
+  const saveProfile = async () => {
+    if (!token) return;
+    setError("");
+    setSaving(true);
+    try {
+      const { data } = await axios.patch(
+        `${API}/users/me/profile`,
+        profileForm,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          withCredentials: true,
+        },
+      );
+      setSaving(false);
+      if (refreshMe) await refreshMe(token);
+      setProfileForm({
+        username: data.username || "",
+        profile_emoji: data.profile_emoji || "◇",
+        profile_color: data.profile_color || "#6366f1",
+        profile_bio: data.profile_bio || "",
+      });
+    } catch (e) {
+      setSaving(false);
+      setError(e.response?.data?.detail || "Failed to save profile.");
+    }
+  };
 
   return (
     <div className="nx-settings" data-testid="app-settings">
@@ -155,6 +204,86 @@ export default function Settings() {
                   />
                   <span className="nx-slider-val">{settings.fontSize}px</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "profile" && (
+          <div data-testid="set-pane-profile">
+            <div className="nx-set-section">
+              <div className="nx-set-title">Profile customization</div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">Username</div>
+                  <div className="nx-row-help">Choose a nickname for chat and profile cards.</div>
+                </div>
+                <input
+                  className="nx-input"
+                  value={profileForm.username}
+                  onChange={(e) => setProfileForm((f) => ({ ...f, username: e.target.value }))}
+                  data-testid="set-profile-username"
+                />
+              </div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">Profile color</div>
+                  <div className="nx-row-help">Pick a color for your profile badge and avatar.</div>
+                </div>
+                <input
+                  className="nx-input"
+                  type="color"
+                  value={profileForm.profile_color}
+                  onChange={(e) => setProfileForm((f) => ({ ...f, profile_color: e.target.value }))}
+                  data-testid="set-profile-color"
+                />
+              </div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">About</div>
+                  <div className="nx-row-help">Write a short profile bio that appears on your card.</div>
+                </div>
+                <textarea
+                  className="nx-input"
+                  rows={4}
+                  value={profileForm.profile_bio}
+                  onChange={(e) => setProfileForm((f) => ({ ...f, profile_bio: e.target.value }))}
+                  data-testid="set-profile-bio"
+                />
+              </div>
+              <div className="nx-row">
+                <div>
+                  <div className="nx-row-label">Name font</div>
+                  <div className="nx-row-help">Choose how your display name is rendered in chat.</div>
+                </div>
+                <div className="ax-pickrow">
+                  {[
+                    { id: "default", label: "Sans" },
+                    { id: "serif", label: "Serif" },
+                    { id: "mono", label: "Mono" },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      className={`ax-pick ${settings.profileFont === option.id ? "active" : ""}`}
+                      onClick={() => update({ profileFont: option.id })}
+                      type="button"
+                      data-testid={`set-profile-font-${option.id}`}
+                    >
+                      <span>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {error && <div className="nx-error">{error}</div>}
+              <div className="nx-btn-row">
+                <button
+                  className="nx-btn primary"
+                  onClick={saveProfile}
+                  disabled={saving}
+                  data-testid="set-profile-save"
+                >
+                  {saving ? "Saving…" : "Save profile"}
+                </button>
               </div>
             </div>
           </div>

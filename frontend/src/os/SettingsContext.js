@@ -9,6 +9,7 @@ const DEFAULTS = {
   blur: 36,
   transparency: 0.72,
   fontSize: 14,
+  profileFont: "default",
   rgb: false,
   cursor: "dot",          // "system" | "dot" | "ring" | "minimal" | "crosshair" | "glow"
   clock24: false,         // false = 12h, true = 24h (military)
@@ -46,6 +47,12 @@ export function SettingsProvider({ children }) {
     r.setProperty("--ax-blur", `${settings.blur}px`);
     r.setProperty("--ax-glass-alpha", String(settings.transparency));
     r.setProperty("--ax-font", `${settings.fontSize}px`);
+    const profileFontFamily = settings.profileFont === "serif"
+      ? "ui-serif, Georgia, serif"
+      : settings.profileFont === "mono"
+        ? "ui-monospace, SFMono-Regular, monospace"
+        : "inherit";
+    r.setProperty("--ax-profile-font", profileFontFamily);
     r.setProperty("--ax-wall", `url('${settings.wallpaper}')`);
   }, [settings]);
 

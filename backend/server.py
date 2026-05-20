@@ -69,6 +69,11 @@ class UserOut(BaseModel):
     id: str
     username: str
     is_dev: bool
+    role: str = "member"
+    badges: List[str] = []
+    profile_emoji: str = "◇"
+    profile_color: str = "#6366f1"
+    profile_bio: str = ""
     created_at: datetime
 
 
@@ -80,6 +85,26 @@ class AuthOut(BaseModel):
 class ChatMessageOut(BaseModel):
     id: str
     kind: str  # "msg" | "system"
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    is_dev: Optional[bool] = None
+    text: str
+    ts: datetime
+
+
+class DMMessageOut(BaseModel):
+    id: str
+    from_user_id: str
+    from_username: str
+    to_user_id: str
+    text: str
+    ts: datetime
+
+
+class ChatMessageOut(BaseModel):
+    id: str
+    kind: str  # "msg" | "system"
+    user_id: Optional[str] = None
     username: Optional[str] = None
     is_dev: Optional[bool] = None
     text: str
@@ -154,6 +179,11 @@ def user_to_out(u: dict) -> UserOut:
         id=u["id"],
         username=u["username"],
         is_dev=bool(u.get("is_dev", False)),
+        role=u.get("role", "member") or "member",
+        badges=u.get("badges", []) or [],
+        profile_emoji=u.get("profile_emoji", "◇") or "◇",
+        profile_color=u.get("profile_color", "#6366f1") or "#6366f1",
+        profile_bio=u.get("profile_bio", "") or "",
         created_at=u["created_at"] if isinstance(u["created_at"], datetime)
         else datetime.fromisoformat(u["created_at"]),
     )
@@ -211,6 +241,11 @@ async def register(payload: RegisterIn, response: Response):
         "username_lower": uname.lower(),
         "password_hash": hash_password(payload.password),
         "is_dev": is_dev,
+        "role": "member",
+        "badges": [],
+        "profile_emoji": "◇",
+        "profile_color": "#6366f1",
+        "profile_bio": "",
         "is_banned": False,
         "fingerprints": [payload.fingerprint] if payload.fingerprint else [],
         "last_fingerprint": payload.fingerprint or None,
@@ -246,9 +281,59 @@ async def login(payload: LoginIn, response: Response):
     return AuthOut(token=token, user=user_to_out(u))
 
 
+class UserProfileIn(BaseModel):
+    username: Optional[str] = None
+    badges: Optional[List[str]] = []
+    profile_bio: Optional[str] = ""
+    profile_emoji: Optional[str] = "◇"
+    profile_color: Optional[str] = "#6366f1"
+
+
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user: dict = Depends(get_current_user)):
     return user_to_out(user)
+
+
+@api_router.get("/users/{user_id}", response_model=UserOut)
+async def user_profile(user_id: str, _: dict = Depends(get_current_user)):
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0, "username_lower": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return user_to_out(user)
+
+
+@api_router.patch("/users/me/profile", response_model=UserOut)
+async def update_profile(payload: UserProfileIn, user: dict = Depends(get_current_user)):
+    bio = (payload.profile_bio or "").strip()[:240]
+    emoji = (payload.profile_emoji or "◇").strip()[:2] or "◇"
+    color = (payload.profile_color or "#6366f1").strip()
+    update_fields = {
+        "profile_bio": bio,
+        "profile_emoji": emoji,
+        "profile_color": color,
+    }
+    if payload.username is not None:
+        uname = payload.username.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{2,24}", uname):
+            raise HTTPException(status_code=400, detail="Username may use letters, numbers, _ or - (2-24 chars).")
+        if uname.lower() != user["username"].lower():
+            existing = await db.users.find_one({"username_lower": uname.lower()})
+            if existing:
+                raise HTTPException(status_code=409, detail="Username already taken.")
+        update_fields["username"] = uname
+        update_fields["username_lower"] = uname.lower()
+    if payload.badges is not None and user.get("is_dev"):
+        allowed_badges = {"developer", "staff", "trusted", "beta", "founder"}
+        requested = [b for b in payload.badges if isinstance(b, str)]
+        update_fields["badges"] = [b for b in requested if b in allowed_badges]
+    if not re.fullmatch(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", color):
+        raise HTTPException(status_code=400, detail="Profile color must be a valid hex value like #aabbcc.")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": update_fields},
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0, "username_lower": 0})
+    return user_to_out(updated)
 
 
 # -------------------- CHAT --------------------
@@ -272,7 +357,15 @@ class ConnectionManager:
         seen = {}
         for c in self.connections.values():
             u = c["user"]
-            seen[u["id"]] = {"id": u["id"], "username": u["username"], "is_dev": bool(u.get("is_dev", False))}
+            seen[u["id"]] = {
+                "id": u["id"],
+                "username": u["username"],
+                "is_dev": bool(u.get("is_dev", False)),
+                "role": u.get("role", "member") or "member",
+                "badges": u.get("badges", []) or [],
+                "profile_emoji": u.get("profile_emoji", "◇") or "◇",
+                "profile_color": u.get("profile_color", "#6366f1") or "#6366f1",
+            }
         return list(seen.values())
 
     async def broadcast(self, message: dict):
@@ -317,6 +410,7 @@ def _msg_doc(kind: str, text: str, user: Optional[dict] = None) -> dict:
     return {
         "id": str(uuid.uuid4()),
         "kind": kind,
+        "user_id": user["id"] if user else None,
         "username": user["username"] if user else None,
         "is_dev": bool(user.get("is_dev", False)) if user else None,
         "text": text,
@@ -357,7 +451,7 @@ def _filter_message(text: str, blocked: List[str]) -> str:
 
 async def _save_and_broadcast(doc: dict):
     await db.chat_messages.insert_one({**doc})
-    out = {k: doc[k] for k in ("id", "kind", "username", "is_dev", "text", "ts")}
+    out = {k: doc[k] for k in ("id", "kind", "user_id", "username", "is_dev", "text", "ts")}
     await manager.broadcast({"type": "message", "data": out})
 
 
@@ -368,7 +462,7 @@ async def chat_history(limit: int = 50, user: dict = Depends(get_current_user)):
     items.reverse()
     return [
         ChatMessageOut(
-            id=m["id"], kind=m["kind"], username=m.get("username"),
+            id=m["id"], kind=m["kind"], user_id=m.get("user_id"), username=m.get("username"),
             is_dev=m.get("is_dev"), text=m["text"],
             ts=m["ts"] if isinstance(m["ts"], datetime) else datetime.fromisoformat(m["ts"]),
         )
@@ -379,6 +473,95 @@ async def chat_history(limit: int = 50, user: dict = Depends(get_current_user)):
 @api_router.get("/chat/online")
 async def chat_online(user: dict = Depends(get_current_user)):
     return {"users": manager.online_users()}
+
+
+# -------------------- DM (PRIVATE MESSAGING) --------------------
+async def _save_dm(from_user: dict, to_user_id: str, text: str):
+    """Save DM to database and send to recipient."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "from_user_id": from_user["id"],
+        "from_username": from_user["username"],
+        "to_user_id": to_user_id,
+        "text": text[:500],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.dm_messages.insert_one({**doc})
+    out = {k: doc[k] for k in ("id", "from_user_id", "from_username", "to_user_id", "text", "ts")}
+    await manager.send_to_user(to_user_id, {"type": "dm", "data": out})
+    return out
+
+
+@api_router.get("/dm/history/{other_user_id}", response_model=List[DMMessageOut])
+async def dm_history(other_user_id: str, limit: int = 50, user: dict = Depends(get_current_user)):
+    """Get DM history between current user and another user."""
+    my_id = user["id"]
+    query = {
+        "$or": [
+            {"from_user_id": my_id, "to_user_id": other_user_id},
+            {"from_user_id": other_user_id, "to_user_id": my_id},
+        ]
+    }
+    cursor = db.dm_messages.find(query, {"_id": 0}).sort("ts", -1).limit(min(max(limit, 1), 200))
+    items = await cursor.to_list(length=limit)
+    items.reverse()
+    return [
+        DMMessageOut(
+            id=m["id"],
+            from_user_id=m["from_user_id"],
+            from_username=m["from_username"],
+            to_user_id=m["to_user_id"],
+            text=m["text"],
+            ts=m["ts"] if isinstance(m["ts"], datetime) else datetime.fromisoformat(m["ts"]),
+        )
+        for m in items
+    ]
+
+
+@api_router.get("/dm/list")
+async def dm_list(user: dict = Depends(get_current_user)):
+    """Get list of users with whom current user has DMs."""
+    my_id = user["id"]
+    # Find all unique users in DM history
+    query = {"$or": [{"from_user_id": my_id}, {"to_user_id": my_id}]}
+    dms = await db.dm_messages.find(query, {"_id": 0, "from_user_id": 1, "to_user_id": 1}).to_list(None)
+    
+    user_ids = set()
+    for dm in dms:
+        if dm["from_user_id"] == my_id:
+            user_ids.add(dm["to_user_id"])
+        else:
+            user_ids.add(dm["from_user_id"])
+    
+    # Get user info for each
+    users = []
+    for uid in user_ids:
+        u = await db.users.find_one(
+            {"id": uid}, {"_id": 0, "id": 1, "username": 1, "is_dev": 1, "role": 1, "profile_emoji": 1, "profile_color": 1}
+        )
+        if u:
+            users.append({
+                "id": u["id"],
+                "username": u["username"],
+                "is_dev": bool(u.get("is_dev", False)),
+                "role": u.get("role", "member") or "member",
+                "badges": u.get("badges", []) or [],
+                "profile_emoji": u.get("profile_emoji", "◇") or "◇",
+                "profile_color": u.get("profile_color", "#6366f1") or "#6366f1",
+            })
+    return {"users": users}
+
+
+@api_router.delete("/dm/messages/{message_id}")
+async def delete_dm(message_id: str, user: dict = Depends(get_current_user)):
+    """Delete a DM (only by sender)."""
+    msg = await db.dm_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if msg["from_user_id"] != user["id"] and not user.get("is_dev"):
+        raise HTTPException(status_code=403, detail="Cannot delete this message.")
+    await db.dm_messages.delete_one({"id": message_id})
+    return {"status": "deleted"}
 
 
 @app.websocket("/api/ws/chat")
@@ -410,6 +593,20 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...), fp: Optional[st
 
         while True:
             data = await websocket.receive_json()
+            
+            # Handle DM
+            if data.get("type") == "dm":
+                to_user_id = (data.get("to_user_id") or "").strip()
+                text = (data.get("text") or "").strip()
+                if not text or not to_user_id:
+                    continue
+                text = text[:500]
+                blocked = await _blocked_words()
+                text = _filter_message(text, blocked)
+                await _save_dm(user, to_user_id, text)
+                continue
+            
+            # Handle public chat
             text = (data.get("text") or "").strip()
             if not text:
                 continue
@@ -960,6 +1157,10 @@ class NotifyIn(BaseModel):
     body: str = Field(min_length=1, max_length=400)
 
 
+class RoleIn(BaseModel):
+    role: str = Field(min_length=1, max_length=24)
+
+
 class LaunchIn(BaseModel):
     app: str = Field(min_length=1, max_length=64)
 
@@ -1015,6 +1216,22 @@ async def admin_kick(user_id: str, dev: dict = Depends(get_dev_user)):
     await manager.broadcast({"type": "online", "users": manager.online_users()})
     await _log_event("kick", user_id=user_id, meta={"by": dev["username"], "kicked": kicked})
     return {"ok": True, "kicked": kicked}
+
+
+@api_router.post("/admin/users/{user_id}/role")
+async def admin_set_role(user_id: str, payload: RoleIn, dev: dict = Depends(get_dev_user)):
+    allowed = {"member", "trusted"}
+    role = payload.role.strip().lower()
+    if role not in allowed:
+        raise HTTPException(status_code=400, detail=f"Role must be one of: {', '.join(sorted(allowed))}.")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "is_dev": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.get("is_dev"):
+        raise HTTPException(status_code=400, detail="Cannot change role for a developer account.")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": role}})
+    await _log_event("role_change", user_id=user_id, username=target["username"], meta={"by": dev["username"], "role": role})
+    return {"ok": True, "role": role}
 
 
 @api_router.post("/admin/users/{user_id}/notify")

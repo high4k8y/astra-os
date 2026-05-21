@@ -1023,8 +1023,14 @@ async def proxy(url: str = Query(...), request: Request = None):
         upstream_headers["Cookie"] = upstream_cookie
 
     try:
+        upstream_headers["Connection"] = "keep-alive"
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=25.0, headers=upstream_headers,
+            follow_redirects=True,
+            timeout=20.0,
+            headers=upstream_headers,
+            http2=True,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+            trust_env=False,
         ) as client_:
             r = await client_.get(url)
     except Exception as e:
@@ -1220,10 +1226,11 @@ async def admin_kick(user_id: str, dev: dict = Depends(get_dev_user)):
 
 @api_router.post("/admin/users/{user_id}/role")
 async def admin_set_role(user_id: str, payload: RoleIn, dev: dict = Depends(get_dev_user)):
-    allowed = {"member", "trusted"}
     role = payload.role.strip().lower()
-    if role not in allowed:
-        raise HTTPException(status_code=400, detail=f"Role must be one of: {', '.join(sorted(allowed))}.")
+    if not re.fullmatch(r"[a-z0-9_-]{1,24}", role):
+        raise HTTPException(status_code=400, detail="Role must be 1-24 characters and use only letters, numbers, dashes, or underscores.")
+    if role == "developer":
+        raise HTTPException(status_code=400, detail="Cannot assign the developer role.")
     target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "is_dev": 1})
     if not target:
         raise HTTPException(status_code=404, detail="User not found.")

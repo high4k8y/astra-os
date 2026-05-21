@@ -5,10 +5,12 @@ export default function Window({
   id, title, x = 200, y = 100, w = 720, h = 480, z, onFocus, onClose, onMinimize, children,
 }) {
   const [pos, setPos] = useState({ x, y });
+  const [size, setSize] = useState({ w, h });
   const drag = useRef(null);
+  const resize = useRef(null);
 
   const onMouseDown = (e) => {
-    if (e.target.closest(".nx-win-btn")) return;
+    if (e.target.closest(".nx-win-btn") || e.target.closest(".nx-win-resize")) return;
     onFocus();
     drag.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
     const move = (ev) => {
@@ -16,7 +18,7 @@ export default function Window({
       const dx = ev.clientX - drag.current.sx;
       const dy = ev.clientY - drag.current.sy;
       setPos({
-        x: Math.max(-w + 80, Math.min(window.innerWidth - 80, drag.current.ox + dx)),
+        x: Math.max(-size.w + 80, Math.min(window.innerWidth - 80, drag.current.ox + dx)),
         y: Math.max(0, Math.min(window.innerHeight - 80, drag.current.oy + dy)),
       });
     };
@@ -29,11 +31,34 @@ export default function Window({
     window.addEventListener("mouseup", up);
   };
 
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onFocus();
+    resize.current = { sx: e.clientX, sy: e.clientY, ow: size.w, oh: size.h };
+    const move = (ev) => {
+      if (!resize.current) return;
+      const dx = ev.clientX - resize.current.sx;
+      const dy = ev.clientY - resize.current.sy;
+      setSize({
+        w: Math.max(320, Math.min(window.innerWidth - pos.x, resize.current.ow + dx)),
+        h: Math.max(220, Math.min(window.innerHeight - pos.y, resize.current.oh + dy)),
+      });
+    };
+    const up = () => {
+      resize.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   return (
     <div
       className="nx-window"
       data-testid={`window-${id}`}
-      style={{ left: pos.x, top: pos.y, width: w, height: h, zIndex: z }}
+      style={{ left: pos.x, top: pos.y, width: size.w, height: size.h, zIndex: z }}
       onMouseDown={onFocus}
     >
       <div className="nx-win-head" onMouseDown={onMouseDown} data-testid={`window-head-${id}`}>
@@ -53,6 +78,7 @@ export default function Window({
         </div>
       </div>
       <div className="nx-win-body">{children}</div>
+      <div className="nx-win-resize" onMouseDown={onResizeMouseDown} title="Resize window" />
     </div>
   );
 }

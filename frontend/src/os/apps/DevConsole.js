@@ -133,6 +133,13 @@ function UsersPane() {
     if (!app) return;
     action("Launch", () => api({ method: "POST", url: `${API}/admin/users/${u.id}/launch`, data: { app } }), u.id);
   };
+  const setRole = (u) => {
+    const role = window.prompt(`Set role for "${u.username}" (member, trusted, staff, moderator, admin, founder):`, u.role || "member");
+    if (role === null) return;
+    const normalized = role.trim().toLowerCase();
+    if (!normalized) return;
+    action("Set role", () => api({ method: "POST", url: `${API}/admin/users/${u.id}/role`, data: { role: normalized } }), u.id);
+  };
   const navigate = (u) => {
     const url = window.prompt(`Open URL in ${u.username}'s Browser:`, "https://example.com");
     if (!url) return;
@@ -160,6 +167,7 @@ function UsersPane() {
                   <div>
                     <span className="ax-dev-username">{u.username}</span>
                     {u.is_dev && <span className="ax-chat-devchip" style={{ marginLeft: 6 }}>dev</span>}
+                    {u.role && !u.is_dev && <span className="ax-dev-role" style={{ marginLeft: 6 }}>{u.role}</span>}
                     {u.is_banned && <span className="ax-dev-banchip">{u.hw_banned ? "hw-banned" : "banned"}</span>}
                   </div>
                   <div className="ax-dev-id">{u.id.slice(0, 8)} · joined {new Date(u.created_at).toLocaleDateString()}</div>
@@ -183,6 +191,9 @@ function UsersPane() {
                   </button>
                   <button onClick={() => navigate(u)} disabled={!u.online || !!busy[u.id]} title="Open a URL in their Browser" data-testid={`dev-navigate-${u.username}`}>
                     <LinkIcon size={11} strokeWidth={1.8} /> Open URL
+                  </button>
+                  <button onClick={() => setRole(u)} disabled={!!busy[u.id]} title="Assign or change this user's role" data-testid={`dev-setrole-${u.username}`}>
+                    <ShieldAlert size={11} strokeWidth={1.8} /> Set role
                   </button>
                   <button onClick={() => closeAll(u)} disabled={!u.online || !!busy[u.id]} title="Close every app on their screen" data-testid={`dev-closeall-${u.username}`}>
                     <XIcon size={11} strokeWidth={1.8} /> Close all

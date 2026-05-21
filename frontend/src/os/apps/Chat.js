@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Send, Code2, Wifi, WifiOff, Trash2, X, ArrowLeft, MessageCircle, Shield, Star, Zap, Crown, Award } from "lucide-react";
+import { Send, Code2, Wifi, WifiOff, Trash2, X, MessageCircle, Shield, Star, Zap, Crown, Award, Settings } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { useSettings } from "../SettingsContext";
 
@@ -27,51 +27,51 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [online, setOnline] = useState([]);
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState("connecting"); // connecting | online | offline
-  const [selectedUser, setSelectedUser] = useState(null); // null = public chat, {id, username} = DM
-  const [dmMessages, setDmMessages] = useState({}); // {userId: [messages]}
+  const [status, setStatus] = useState("connecting");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [dmMessages, setDmMessages] = useState({});
   const [dmContacts, setDmContacts] = useState([]);
   const [profileCache, setProfileCache] = useState({});
   const [profileUser, setProfileUser] = useState(null);
-  const [chatTab, setChatTab] = useState("messages");
-  const [profileForm, setProfileForm] = useState({
-    username: user?.username || "",
-    profile_emoji: user?.profile_emoji || "◇",
-    profile_color: user?.profile_color || "#6366f1",
-    profile_bio: user?.profile_bio || "",
-    badges: user?.badges || [],
-    banner_color: user?.banner_color || "#5865f2",
-    status_emoji: user?.status_emoji || "🟢",
-    status_text: user?.status_text || "",
-    theme: user?.theme || "dark",
-  });
+  const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [profileForm, setProfileForm] = useState({
+    profile_emoji: user?.profile_emoji || "◇",
+    profile_color: user?.profile_color || "#5865f2",
+    profile_bio: user?.profile_bio || "",
+    status_emoji: user?.status_emoji || "🟢",
+    status_text: user?.status_text || "",
+    badges: user?.badges || [],
+  });
+
   const wsRef = useRef(null);
   const scrollRef = useRef(null);
   const reconnectRef = useRef(0);
 
   const BADGE_OPTIONS = [
-    { id: "developer", label: "Developer", icon: Code2, color: "#8b5cf6" },
-    { id: "staff", label: "Staff", icon: Shield, color: "#f59e0b" },
-    { id: "trusted", label: "Trusted", icon: Star, color: "#10b981" },
-    { id: "beta", label: "Beta Tester", icon: Zap, color: "#06b6d4" },
-    { id: "founder", label: "Founder", icon: Crown, color: "#ec4899" },
-    { id: "moderator", label: "Moderator", icon: Award, color: "#3b82f6" },
+    { id: "developer", label: "Developer", icon: Code2 },
+    { id: "staff", label: "Staff", icon: Shield },
+    { id: "trusted", label: "Trusted", icon: Star },
+    { id: "beta", label: "Beta Tester", icon: Zap },
+    { id: "founder", label: "Founder", icon: Crown },
+    { id: "moderator", label: "Moderator", icon: Award },
+  ];
+
+  const AVATAR_PRESETS = [
+    "😀", "😎", "👾", "🛡️", "🐉", "⚡", "🌙", "🔥",
+    "🐱", "🦊", "🍀", "🌸", "🎮", "🌟", "💎", "🛸",
   ];
 
   useEffect(() => {
     if (!user) return;
     setProfileForm({
-      username: user.username || "",
       profile_emoji: user.profile_emoji || "◇",
-      profile_color: user.profile_color || "#6366f1",
+      profile_color: user.profile_color || "#5865f2",
       profile_bio: user.profile_bio || "",
-      badges: user.badges || [],
-      banner_color: user.banner_color || "#5865f2",
       status_emoji: user.status_emoji || "🟢",
       status_text: user.status_text || "",
-      theme: user.theme || "dark",
+      badges: user.badges || [],
     });
   }, [user]);
 
@@ -81,43 +81,25 @@ export default function Chat() {
     setSavingProfile(true);
     try {
       const body = {
-        username: profileForm.username,
         profile_emoji: profileForm.profile_emoji,
         profile_color: profileForm.profile_color,
         profile_bio: profileForm.profile_bio,
-        banner_color: profileForm.banner_color,
         status_emoji: profileForm.status_emoji,
         status_text: profileForm.status_text,
-        theme: profileForm.theme,
       };
       if (profileForm.badges && user?.is_dev) {
         body.badges = profileForm.badges;
       }
-      const { data } = await axios.patch(
-        `${API}/users/me/profile`,
-        body,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          withCredentials: true,
-        },
-      );
+      await axios.patch(`${API}/users/me/profile`, body, {
+        headers: { Authorization: `Bearer ${token}` },
+        withCredentials: true,
+      });
       setSavingProfile(false);
       if (refreshMe) await refreshMe(token);
-      setProfileForm((prev) => ({
-        ...prev,
-        username: data.username || prev.username,
-        profile_emoji: data.profile_emoji || prev.profile_emoji,
-        profile_color: data.profile_color || prev.profile_color,
-        profile_bio: data.profile_bio || prev.profile_bio,
-        badges: data.badges || prev.badges,
-        banner_color: data.banner_color || prev.banner_color,
-        status_emoji: data.status_emoji || prev.status_emoji,
-        status_text: data.status_text || prev.status_text,
-        theme: data.theme || prev.theme,
-      }));
+      setEditingProfile(false);
     } catch (e) {
       setSavingProfile(false);
-      setProfileError(e.response?.data?.detail || "Unable to save profile.");
+      setProfileError(e.response?.data?.detail || "Failed to save profile");
     }
   };
 
@@ -152,11 +134,9 @@ export default function Chat() {
 
   const closeProfile = () => setProfileUser(null);
 
-  // DM contact list
   useEffect(() => {
     if (!token) return;
     let cancel = false;
-
     (async () => {
       try {
         const { data } = await axios.get(`${API}/dm/list`, {
@@ -165,19 +145,14 @@ export default function Chat() {
         if (!cancel && data && Array.isArray(data.users)) {
           setDmContacts(data.users || []);
         }
-      } catch (e) {
-        // ignore dm contact fetch failures
-      }
+      } catch (e) { }
     })();
-
     return () => { cancel = true; };
   }, [token]);
 
-  // history
   useEffect(() => {
     let cancel = false;
     if (selectedUser) {
-      // Load DM history
       (async () => {
         try {
           const { data } = await axios.get(`${API}/dm/history/${selectedUser.id}?limit=80`, {
@@ -186,23 +161,21 @@ export default function Chat() {
           if (!cancel) {
             setDmMessages((prev) => ({ ...prev, [selectedUser.id]: data || [] }));
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) { }
       })();
     } else {
-      // Load public chat history
       (async () => {
         try {
           const { data } = await axios.get(`${API}/chat/history?limit=80`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (!cancel) setMessages(data || []);
-        } catch (e) { /* ignore */ }
+        } catch (e) { }
       })();
     }
     return () => { cancel = true; };
   }, [token, selectedUser]);
 
-  // websocket
   useEffect(() => {
     if (!token) return;
     let closed = false;
@@ -235,7 +208,7 @@ export default function Chat() {
           } else if (obj.type === "delete") {
             setMessages((m) => m.filter((x) => x.id !== obj.id));
           }
-        } catch { /* ignore */ }
+        } catch { }
       };
       ws.onclose = () => {
         setStatus("offline");
@@ -244,17 +217,16 @@ export default function Chat() {
         reconnectRef.current += 1;
         setTimeout(() => { if (!closed) open(); }, delay);
       };
-      ws.onerror = () => { try { ws.close(); } catch {} };
+      ws.onerror = () => { try { ws.close(); } catch { } };
     };
 
     open();
     return () => {
       closed = true;
-      try { wsRef.current && wsRef.current.close(); } catch {}
+      try { wsRef.current && wsRef.current.close(); } catch { }
     };
   }, [token, fingerprint]);
 
-  // autoscroll
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, dmMessages, selectedUser]);
@@ -291,10 +263,10 @@ export default function Chat() {
   };
 
   const currentMessages = selectedUser ? (dmMessages[selectedUser.id] || []) : messages;
-  const currentTitle = selectedUser ? `DM with ${selectedUser.username}` : "Public chat";
+  const currentTitle = selectedUser ? `DM with ${selectedUser.username}` : "# general";
   const emptyText = selectedUser
-    ? "No direct messages yet — send a private message to start the conversation."
-    : "No messages yet — say hi 👋";
+    ? "No direct messages yet"
+    : "Welcome to general chat";
 
   const deleteMessage = async (m) => {
     const mine = selectedUser ? m.from_user_id === user?.id : m.username === user?.username;
@@ -315,237 +287,76 @@ export default function Chat() {
   };
 
   return (
-    <div className="ax-chat" data-testid="app-chat">
-      <aside className="ax-chat-side">
-        <div className="ax-chat-side-head">
-          {status === "online"
-            ? <Wifi size={13} strokeWidth={1.7} style={{ color: "#22c55e" }} />
-            : <WifiOff size={13} strokeWidth={1.7} style={{ color: "#fca5a5" }} />}
-          <span data-testid="chat-status">{status}</span>
-          <span className="ax-chat-side-count">{online.length}</span>
+    <div className="discord-layout">
+      <aside className="discord-sidebar">
+        <div className="discord-server">
+          <div className="server-icon">#</div>
+          <div className="server-name">Server</div>
         </div>
-        <div className="ax-chat-roster" data-testid="chat-online-list">
+
+        <div className="sidebar-channels">
           <button
-            type="button"
-            className={`ax-chat-roster-item ${selectedUser ? "" : "selected"}`}
+            className={`channel ${!selectedUser ? "active" : ""}`}
             onClick={() => setSelectedUser(null)}
           >
-            <span className="ax-chat-avatar" style={{ background: "#6b7280" }}>#</span>
-            <span className="ax-chat-name">Public chat</span>
+            # general
           </button>
+        </div>
 
-          {dmContacts.length > 0 && <div className="ax-chat-section-title">Direct messages</div>}
+        <div className="sidebar-divider"></div>
+
+        <div className="dm-header">
+          <span>DIRECT MESSAGES</span>
+        </div>
+
+        <div className="dm-list">
           {dmContacts.length === 0 ? (
-            <div className="ax-chat-empty">No DM contacts yet</div>
+            <div className="empty-state">No DMs</div>
           ) : dmContacts.map((u) => (
             <button
               key={u.id}
-              type="button"
-              className={`ax-chat-roster-item ${selectedUser?.id === u.id ? "selected" : ""}`}
+              className={`dm-item ${selectedUser?.id === u.id ? "active" : ""}`}
               onClick={() => setSelectedUser(u)}
-              data-testid={`chat-dm-user-${u.username}`}
             >
-              <span className="ax-chat-avatar" style={{ background: u.profile_color || "#6b7280" }}>{u.username?.charAt(0).toUpperCase() || "◇"}</span>
-              <div className="ax-chat-roster-info">
-                <span className="ax-chat-name">{u.username}</span>
-                <div className="ax-chat-roster-badges">
-                  {u.is_dev && <span className="ax-chat-badge-small dev" title="developer"><Code2 size={8} /></span>}
-                  {u.role === "trusted" && <span className="ax-chat-badge-small trusted" title="trusted"><Star size={8} /></span>}
-                  {u.badges?.map((b) => <span key={b} className={`ax-chat-badge-small ${b}`} title={b}></span>)}
-                </div>
-              </div>
-            </button>
-          ))}
-
-          <div className="ax-chat-section-title">Online</div>
-          {online.length === 0 && <div className="ax-chat-empty">no one else here</div>}
-          {online.map((u) => (
-            <button
-              key={u.id}
-              type="button"
-              className={`ax-chat-roster-item ${u.id === user?.id ? "me" : ""} ${selectedUser?.id === u.id ? "selected" : ""}`}
-              data-testid={`chat-user-${u.username}`}
-              onClick={() => u.id !== user?.id && setSelectedUser(u)}
-            >
-              <span className="ax-chat-dot" style={{ background: u.profile_color || "#22c55e" }}></span>
-              <span className="ax-chat-avatar-small" style={{ background: u.profile_color || "#22c55e" }}>{u.username?.charAt(0).toUpperCase() || "◇"}</span>
-              <div className="ax-chat-roster-info">
-                <span className="ax-chat-name">{u.username}</span>
-                <div className="ax-chat-roster-badges">
-                  {u.is_dev && <span className="ax-chat-badge-small dev" title="developer"><Code2 size={8} /></span>}
-                  {u.role === "trusted" && <span className="ax-chat-badge-small trusted" title="trusted"><Star size={8} /></span>}
-                  {u.badges?.map((b) => <span key={b} className={`ax-chat-badge-small ${b}`} title={b}></span>)}
-                </div>
-              </div>
-              {u.id === user?.id && <span className="ax-chat-you">you</span>}
+              <span className="dm-avatar" style={{ background: u.profile_color || "#5865f2" }}>
+                {u.username?.charAt(0).toUpperCase()}
+              </span>
+              <span>{u.username}</span>
             </button>
           ))}
         </div>
       </aside>
 
-      <main className="ax-chat-main">
-        <div className="ax-chat-titlebar">
-          <span>{currentTitle}</span>
-          <div className="ax-chat-tablist">
-            <button
-              type="button"
-              className={`ax-chat-tab ${chatTab === "messages" ? "active" : ""}`}
-              onClick={() => setChatTab("messages")}
-            >
-              Messages
-            </button>
-            <button
-              type="button"
-              className={`ax-chat-tab ${chatTab === "profile" ? "active" : ""}`}
-              onClick={() => setChatTab("profile")}
-            >
-              Profile
-            </button>
+      <main className="discord-main">
+        <div className="channel-header">
+          <div className="header-left">
+            <span className="channel-name">{currentTitle}</span>
           </div>
-          {selectedUser && (
-            <button type="button" className="ax-chat-clear" onClick={() => setSelectedUser(null)}>
-              <ArrowLeft size={12} /> back
-            </button>
-          )}
-        </div>
-        {chatTab === "profile" ? (
-          <div className="ax-chat-profile-settings">
-            <div className="ax-chat-settings-section-title">Display</div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Display name</label>
-              <input
-                className="ax-chat-settings-input"
-                value={profileForm.username}
-                onChange={(e) => setProfileForm((f) => ({ ...f, username: e.target.value }))}
-                maxLength={32}
-              />
-            </div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Avatar emoji</label>
-              <input
-                className="ax-chat-settings-input"
-                value={profileForm.profile_emoji}
-                onChange={(e) => setProfileForm((f) => ({ ...f, profile_emoji: e.target.value.slice(0, 2) }))}
-                maxLength={2}
-                placeholder="◇"
-              />
-            </div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Avatar color</label>
-              <input
-                type="color"
-                className="ax-chat-settings-input"
-                value={profileForm.profile_color}
-                onChange={(e) => setProfileForm((f) => ({ ...f, profile_color: e.target.value }))}
-              />
-            </div>
-            
-            <div className="ax-chat-settings-section-title">Profile Card</div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Banner color</label>
-              <input
-                type="color"
-                className="ax-chat-settings-input"
-                value={profileForm.banner_color}
-                onChange={(e) => setProfileForm((f) => ({ ...f, banner_color: e.target.value }))}
-              />
-            </div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Status emoji</label>
-              <input
-                className="ax-chat-settings-input"
-                value={profileForm.status_emoji}
-                onChange={(e) => setProfileForm((f) => ({ ...f, status_emoji: e.target.value.slice(0, 2) }))}
-                maxLength={2}
-                placeholder="🟢"
-              />
-            </div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Status text</label>
-              <input
-                className="ax-chat-settings-input"
-                value={profileForm.status_text}
-                onChange={(e) => setProfileForm((f) => ({ ...f, status_text: e.target.value }))}
-                maxLength={64}
-                placeholder="What's on your mind?"
-              />
-            </div>
-            
-            <div className="ax-chat-settings-section-title">About</div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Bio</label>
-              <textarea
-                className="ax-chat-settings-input ax-chat-settings-textarea"
-                rows={4}
-                value={profileForm.profile_bio}
-                onChange={(e) => setProfileForm((f) => ({ ...f, profile_bio: e.target.value }))}
-                maxLength={256}
-                placeholder="Tell us about yourself..."
-              />
-            </div>
-
-            <div className="ax-chat-settings-section-title">Theme</div>
-            <div className="ax-chat-settings-row">
-              <label className="ax-chat-settings-label">Theme preference</label>
-              <div className="ax-chat-settings-theme-selector">
-                {["dark", "light"].map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className={`ax-chat-theme-btn ${profileForm.theme === t ? "selected" : ""}`}
-                    onClick={() => setProfileForm((f) => ({ ...f, theme: t }))}
-                  >
-                    {t === "dark" ? "🌙 Dark" : "☀️ Light"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {user?.is_dev && (
+          <div className="header-right">
+            {status === "online" ? (
               <>
-                <div className="ax-chat-settings-section-title">Admin: Badges</div>
-                <div className="ax-chat-settings-row">
-                  <label className="ax-chat-settings-label">Assign badges</label>
-                  <div className="ax-chat-settings-badges">
-                    {BADGE_OPTIONS.map((option) => {
-                      const Icon = option.icon;
-                      return (
-                        <button
-                          key={option.id}
-                          type="button"
-                          className={`ax-chat-badge-pill ${profileForm.badges?.includes(option.id) ? "selected" : ""}`}
-                          onClick={() => toggleBadge(option.id)}
-                          title={option.label}
-                        >
-                          {Icon && <Icon size={12} strokeWidth={2} />}
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                <Wifi size={16} style={{ color: "#43b581" }} />
+                <span>Online</span>
+              </>
+            ) : (
+              <>
+                <WifiOff size={16} style={{ color: "#f04747" }} />
+                <span>Offline</span>
               </>
             )}
-            {profileError && <div className="ax-chat-settings-error">{profileError}</div>}
-            <button
-              type="button"
-              className="ax-chat-profile-action"
-              onClick={saveProfile}
-              disabled={savingProfile}
-            >
-              {savingProfile ? "Saving…" : "Save profile"}
-            </button>
+            <span className="user-count">{online.length}</span>
           </div>
-        ) : (
-          <div className="ax-chat-log" ref={scrollRef} data-testid="chat-log">
+        </div>
+
+        <div className="messages-container" ref={scrollRef}>
           {currentMessages.length === 0 && (
-            <div className="ax-chat-blank">{emptyText}</div>
+            <div className="empty-messages">{emptyText}</div>
           )}
           {currentMessages.map((m) => {
             if (!selectedUser && m.kind === "system") {
               return (
-                <div key={m.id} className="ax-chat-sys" data-testid={`chat-msg-${m.id}`}>
-                  · {m.text} · <span>{fmtTime(m.ts)}</span>
+                <div key={m.id} className="system-message">
+                  {m.text}
                 </div>
               );
             }
@@ -553,149 +364,259 @@ export default function Chat() {
             const username = selectedUser ? m.from_username : m.username;
             const mine = selectedUser ? m.from_user_id === user?.id : m.username === user?.username;
             const canDelete = (selectedUser ? mine : mine) || user?.is_dev;
-            const avatarLetter = username?.charAt(0).toUpperCase() || "?";
+
             return (
-              <div
-                key={m.id}
-                className={`ax-chat-msg ${mine ? "mine" : ""}`}
-                data-testid={`chat-msg-${m.id}`}
-              >
-                <span className="ax-chat-msg-avatar" style={{ background: m.profile_color || (mine ? "rgba(99, 102, 241, 0.9)" : "rgba(99, 102, 241, 0.8)") }}>{avatarLetter}</span>
-                <div className="ax-chat-msg-bubble">
-                  <div className="ax-chat-msg-head">
-                    <span
-                      className={`ax-chat-msg-name ${userId ? "clickable" : ""}`}
-                      onClick={userId ? () => openProfile(userId) : undefined}
-                      style={{
-                        cursor: userId ? "pointer" : undefined,
-                        fontFamily: settings.profileFont === "serif"
-                          ? "ui-serif, Georgia, serif"
-                          : settings.profileFont === "mono"
-                            ? "ui-monospace, SFMono-Regular, monospace"
-                            : "inherit",
-                      }}
-                    >
+              <div key={m.id} className={`message ${mine ? "own" : ""}`}>
+                <div className="message-avatar" style={{ background: m.profile_color || "#5865f2" }}>
+                  {m.profile_emoji || username?.charAt(0).toUpperCase()}
+                </div>
+                <div className="message-content">
+                  <div className="message-header">
+                    <span className="author" onClick={() => userId && openProfile(userId)}>
                       {username}
                     </span>
-                    <div className="ax-chat-msg-badges">
-                      {(!selectedUser && m.is_dev) && <span className="ax-chat-badge-msg dev"><Code2 size={8} strokeWidth={2} />dev</span>}
-                      {(!selectedUser && m.badges) && m.badges.map((b) => <span key={b} className={`ax-chat-badge-msg ${b}`}>{b}</span>)}
-                    </div>
-                    <span className="ax-chat-msg-time">{fmtTime(m.ts)}</span>
-                    {canDelete && (!selectedUser || mine) && (
-                      <button
-                        className="ax-chat-msg-del"
-                        onClick={() => deleteMessage(m)}
-                        title={mine ? "Delete your message" : "Delete (admin)"}
-                        data-testid={`chat-msg-del-${m.id}`}
-                      >
-                        <Trash2 size={10} strokeWidth={1.9} />
+                    {m.is_dev && <span className="badge-dev"><Code2 size={10} />Developer</span>}
+                    {m.role === "staff" && <span className="badge-staff"><Shield size={10} />Staff</span>}
+                    {m.badges?.map((b) => {
+                      const opt = BADGE_OPTIONS.find(x => x.id === b);
+                      const Icon = opt?.icon;
+                      return (
+                        <span key={b} className={`badge badge-${b}`}>
+                          {Icon && <Icon size={10} />}
+                          {opt?.label}
+                        </span>
+                      );
+                    })}
+                    <span className="timestamp">{fmtTime(m.ts)}</span>
+                    {canDelete && (
+                      <button className="delete-btn" onClick={() => deleteMessage(m)}>
+                        <Trash2 size={14} />
                       </button>
                     )}
                   </div>
-                  <div className="ax-chat-msg-text">{m.text}</div>
+                  <div className="message-text">{m.text}</div>
                 </div>
               </div>
             );
           })}
         </div>
-      )}
-        <form className="ax-chat-compose" onSubmit={send}>
+
+        <form className="message-input" onSubmit={send}>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={status === "online" ? "Type a message…" : "Reconnecting…"}
+            placeholder={status === "online" ? "Message #general..." : "Reconnecting..."}
             disabled={status !== "online"}
             maxLength={500}
-            data-testid="chat-input"
             spellCheck="false"
           />
-          <button type="submit" disabled={status !== "online" || !input.trim()} data-testid="chat-send">
-            <Send size={14} strokeWidth={1.8} />
+          <button type="submit" disabled={status !== "online" || !input.trim()}>
+            <Send size={18} />
           </button>
         </form>
       </main>
 
-      {profileUser && (
-        <div className="ax-chat-profile-modal-overlay" onClick={closeProfile}>
-          <div className="ax-chat-profile-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="ax-chat-profile-modal-banner" style={{ background: profileUser.banner_color || "#5865f2" }}>
-              <button type="button" className="ax-chat-profile-modal-close" onClick={closeProfile}>
-                <X size={20} />
+      <aside className="user-panel">
+        {editingProfile ? (
+          <div className="profile-edit">
+            <div className="edit-header">
+              <h3>Edit Profile</h3>
+              <button className="close-btn" onClick={() => setEditingProfile(false)}>
+                <X size={18} />
               </button>
             </div>
-            
-            <div className="ax-chat-profile-modal-header">
-              <div className="ax-chat-profile-modal-avatar" style={{ background: profileUser.profile_color || "#7c3aed" }}>
-                {profileUser.profile_emoji || profileUser.username?.charAt(0).toUpperCase() || "?"}
-              </div>
-              {profileUser.status_emoji && (
-                <div className="ax-chat-profile-status-badge">
-                  {profileUser.status_emoji}
-                </div>
-              )}
-            </div>
 
-            <div className="ax-chat-profile-modal-content">
-              <div className="ax-chat-profile-modal-name">{profileUser.username}</div>
-              
-              {profileUser.status_text && (
-                <div className="ax-chat-profile-modal-status">
-                  {profileUser.status_emoji} {profileUser.status_text}
-                </div>
-              )}
-              
-              <div className="ax-chat-profile-modal-badges">
-                {profileUser.is_dev && <span className="ax-chat-badge-discord dev" title="Developer"><Code2 size={12} />Developer</span>}
-                {profileUser.role === "staff" && <span className="ax-chat-badge-discord staff" title="Staff"><Shield size={12} />Staff</span>}
-                {profileUser.role === "trusted" && <span className="ax-chat-badge-discord trusted" title="Trusted"><Star size={12} />Trusted</span>}
-                {profileUser.role === "moderator" && <span className="ax-chat-badge-discord moderator" title="Moderator"><Award size={12} />Moderator</span>}
-                {profileUser.badges?.map((badge) => {
-                  const badgeOpt = BADGE_OPTIONS.find(b => b.id === badge);
-                  const BadgeIcon = badgeOpt?.icon;
-                  return (
-                    <span key={badge} className={`ax-chat-badge-discord ${badge}`} title={badgeOpt?.label || badge}>
-                      {BadgeIcon && <BadgeIcon size={12} />}
-                      {badgeOpt?.label || badge}
-                    </span>
-                  );
-                })}
+            <div className="form">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <label style={{ margin: 0 }}>Username</label>
+                <span style={{ fontSize: 12, color: "#b9bbbe" }}>{user?.username || "Guest"}</span>
               </div>
 
-              {profileUser.profile_bio && (
-                <div className="ax-chat-profile-modal-section">
-                  <div className="ax-chat-profile-modal-section-title">About Me</div>
-                  <div className="ax-chat-profile-modal-bio">
-                    {profileUser.profile_bio}
+              <label>Choose avatar</label>
+              <div className="avatar-grid">
+                {AVATAR_PRESETS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className={`avatar-option ${profileForm.profile_emoji === emoji ? "selected" : ""}`}
+                    onClick={() => setProfileForm((f) => ({ ...f, profile_emoji: emoji }))}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              <label>Custom avatar</label>
+              <input
+                value={profileForm.profile_emoji}
+                onChange={(e) => setProfileForm((f) => ({ ...f, profile_emoji: e.target.value.slice(0, 2) }))}
+                maxLength={2}
+                placeholder="Pick or type an emoji"
+              />
+
+              <label>Avatar Color</label>
+              <input
+                type="color"
+                value={profileForm.profile_color}
+                onChange={(e) => setProfileForm((f) => ({ ...f, profile_color: e.target.value }))}
+              />
+
+              <label>Status Emoji</label>
+              <input
+                value={profileForm.status_emoji}
+                onChange={(e) => setProfileForm((f) => ({ ...f, status_emoji: e.target.value.slice(0, 2) }))}
+                maxLength={2}
+              />
+
+              <label>Status Text</label>
+              <input
+                value={profileForm.status_text}
+                onChange={(e) => setProfileForm((f) => ({ ...f, status_text: e.target.value }))}
+                maxLength={64}
+                placeholder="What's up?"
+              />
+
+              <label>Bio</label>
+              <textarea
+                value={profileForm.profile_bio}
+                onChange={(e) => setProfileForm((f) => ({ ...f, profile_bio: e.target.value }))}
+                maxLength={256}
+                placeholder="Tell us about yourself"
+                rows={3}
+              />
+
+              {user?.is_dev && (
+                <>
+                  <label>Badges</label>
+                  <div className="badge-grid">
+                    {BADGE_OPTIONS.map((opt) => {
+                      const Icon = opt.icon;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={`badge-btn ${profileForm.badges?.includes(opt.id) ? "selected" : ""}`}
+                          onClick={() => toggleBadge(opt.id)}
+                        >
+                          {Icon && <Icon size={12} />}
+                          {opt.label}
+                        </button>
+                      );
+                    })}
                   </div>
-                </div>
+                </>
               )}
 
-              <div className="ax-chat-profile-modal-meta">
-                <div className="ax-chat-profile-modal-meta-item">
-                  <span className="ax-chat-profile-modal-meta-label">User ID</span>
-                  <span className="ax-chat-profile-modal-meta-value">{profileUser.id}</span>
-                </div>
-                <div className="ax-chat-profile-modal-meta-item">
-                  <span className="ax-chat-profile-modal-meta-label">Joined</span>
-                  <span className="ax-chat-profile-modal-meta-value">{profileUser.created_at ? new Date(profileUser.created_at).toLocaleDateString() : "Unknown"}</span>
-                </div>
-              </div>
+              {profileError && <div className="error">{profileError}</div>}
 
-              {profileUser.id !== user?.id && (
-                <button
-                  type="button"
-                  className="ax-chat-profile-modal-action"
-                  onClick={() => {
-                    setSelectedUser({ id: profileUser.id, username: profileUser.username });
-                    closeProfile();
-                  }}
-                >
-                  <MessageCircle size={14} /> Send message
-                </button>
-              )}
+              <button className="save-btn" onClick={saveProfile} disabled={savingProfile}>
+                {savingProfile ? "Saving..." : "Save changes"}
+              </button>
             </div>
+          </div>
+        ) : (
+          <div className="user-card">
+            <div className="card-banner" style={{ background: profileForm.profile_color }}></div>
+            <div className="card-avatar" style={{ background: profileForm.profile_color }}>
+              {profileForm.profile_emoji}
+            </div>
+
+            <h3>{user?.username || "Guest"}</h3>
+            {profileForm.status_text && (
+              <p className="status">{profileForm.status_emoji} {profileForm.status_text}</p>
+            )}
+
+            {profileForm.profile_bio && (
+              <p className="bio">{profileForm.profile_bio}</p>
+            )}
+
+            <div className="badges">
+              {user?.is_dev && <span className="badge dev"><Code2 size={10} />Dev</span>}
+              {profileUser?.role && profileUser.role !== "member" && !profileUser?.is_dev && (
+                <span className={`badge ${profileUser.role}`}>
+                  {profileUser.role.charAt(0).toUpperCase() + profileUser.role.slice(1)}
+                </span>
+              )}
+              {profileForm.badges?.map((b) => {
+                const opt = BADGE_OPTIONS.find(x => x.id === b);
+                const Icon = opt?.icon;
+                return (
+                  <span key={b} className={`badge ${b}`}>
+                    {Icon && <Icon size={10} />}
+                    {opt?.label}
+                  </span>
+                );
+              })}
+            </div>
+
+            <button className="edit-btn" onClick={() => setEditingProfile(true)}>
+              <Settings size={16} />
+              Edit Profile
+            </button>
+          </div>
+        )}
+
+        <div className="online-section">
+          <h4>ONLINE ({online.length})</h4>
+          {online.map((u) => (
+            <button
+              key={u.id}
+              className="online-user"
+              onClick={() => u.id !== user?.id && setSelectedUser(u)}
+            >
+              <span className="avatar" style={{ background: u.profile_color || "#5865f2" }}>
+                {u.profile_emoji || u.username?.charAt(0).toUpperCase()}
+              </span>
+              <span>{u.username}</span>
+              {u.is_dev && <span className="dev-tag">dev</span>}
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      {profileUser && (
+        <div className="profile-overlay" onClick={closeProfile}>
+          <div className="profile-card" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={closeProfile}><X size={20} /></button>
+            <div className="card-banner" style={{ background: profileUser.profile_color || "#5865f2" }}></div>
+            <div className="card-avatar" style={{ background: profileUser.profile_color || "#5865f2" }}>
+              {profileUser.profile_emoji || profileUser.username?.charAt(0).toUpperCase()}
+            </div>
+
+            <h2>{profileUser.username}</h2>
+            {profileUser.status_text && (
+              <p className="status">{profileUser.status_emoji} {profileUser.status_text}</p>
+            )}
+
+            <div className="badges">
+              {profileUser.is_dev && <span className="badge dev"><Code2 size={12} />Developer</span>}
+              {profileUser.role === "staff" && <span className="badge staff"><Shield size={12} />Staff</span>}
+              {profileUser.badges?.map((b) => {
+                const opt = BADGE_OPTIONS.find(x => x.id === b);
+                const Icon = opt?.icon;
+                return (
+                  <span key={b} className={`badge ${b}`}>
+                    {Icon && <Icon size={12} />}
+                    {opt?.label}
+                  </span>
+                );
+              })}
+            </div>
+
+            {profileUser.profile_bio && <p className="bio">{profileUser.profile_bio}</p>}
+
+            <div className="meta">
+              <div><strong>ID:</strong> {profileUser.id}</div>
+              <div><strong>Joined:</strong> {profileUser.created_at ? new Date(profileUser.created_at).toLocaleDateString() : "Unknown"}</div>
+            </div>
+
+            {profileUser.id !== user?.id && (
+              <button className="msg-btn" onClick={() => { setSelectedUser({ id: profileUser.id, username: profileUser.username }); closeProfile(); }}>
+                <MessageCircle size={16} />
+                Send Message
+              </button>
+            )}
           </div>
         </div>
       )}

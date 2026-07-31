@@ -37,6 +37,7 @@ export default function Browser() {
   const [url, setUrl] = useState("");            // address bar text
   const [iframeSrc, setIframeSrc] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState("proxy");
   const [bookmarks, setBookmarks] = useState(loadBookmarks);
   const [downloading, setDownloading] = useState(false);
   const [downloadMsg, setDownloadMsg] = useState("");
@@ -74,7 +75,7 @@ export default function Browser() {
       });
       setHIdx((i) => i + 1);
     }
-    setIframeSrc(PROXY + encodeURIComponent(target));
+    setIframeSrc(mode === "proxy" ? PROXY + encodeURIComponent(target) : target);
     setLoading(true);
   };
 
@@ -82,17 +83,27 @@ export default function Browser() {
     if (hIdx <= 0) return;
     const ni = hIdx - 1;
     setHIdx(ni);
-    setIframeSrc(PROXY + encodeURIComponent(history[ni]));
+    setIframeSrc(mode === "proxy" ? PROXY + encodeURIComponent(history[ni]) : history[ni]);
     setLoading(true);
   };
   const forward = () => {
     if (hIdx >= history.length - 1) return;
     const ni = hIdx + 1;
     setHIdx(ni);
-    setIframeSrc(PROXY + encodeURIComponent(history[ni]));
+    setIframeSrc(mode === "proxy" ? PROXY + encodeURIComponent(history[ni]) : history[ni]);
     setLoading(true);
   };
   const goHome = () => { setHIdx(-1); setIframeSrc(""); setUrl(""); setLoading(false); };
+  const toggleMode = () => {
+    setMode((prev) => {
+      const next = prev === "proxy" ? "direct" : "proxy";
+      if (currentUrl) {
+        setIframeSrc(next === "proxy" ? PROXY + encodeURIComponent(currentUrl) : currentUrl);
+        setLoading(true);
+      }
+      return next;
+    });
+  };
 
   const reload = () => {
     if (showHome) return;
@@ -143,6 +154,15 @@ export default function Browser() {
         </button>
         <button onClick={goHome} data-testid="br-home" title="Home">
           <HomeIcon size={15} strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          onClick={toggleMode}
+          data-testid="br-toggle-mode"
+          title={`Switch to ${mode === "proxy" ? "direct" : "proxy"} mode`}
+          style={{ minWidth: 90, fontSize: 12 }}
+        >
+          {mode === "proxy" ? "Proxy" : "Direct"}
         </button>
         <input
           className="nx-browser-url"

@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, ConfigDict
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
+proxy_client: Optional[httpx.AsyncClient] = None
 
 app = FastAPI(title="Astra OS API")
 api_router = APIRouter(prefix="/api")
@@ -73,6 +74,7 @@ class UserOut(BaseModel):
     badges: List[str] = []
     profile_emoji: str = "◇"
     profile_color: str = "#6366f1"
+    profile_banner: str = ""
     profile_bio: str = ""
     created_at: datetime
 
@@ -88,6 +90,11 @@ class ChatMessageOut(BaseModel):
     user_id: Optional[str] = None
     username: Optional[str] = None
     is_dev: Optional[bool] = None
+    role: Optional[str] = None
+    badges: List[str] = []
+    profile_emoji: str = "◇"
+    profile_color: str = "#6366f1"
+    channel: str = "general"
     text: str
     ts: datetime
 
@@ -99,16 +106,10 @@ class DMMessageOut(BaseModel):
     to_user_id: str
     text: str
     ts: datetime
-
-
-class ChatMessageOut(BaseModel):
-    id: str
-    kind: str  # "msg" | "system"
-    user_id: Optional[str] = None
-    username: Optional[str] = None
-    is_dev: Optional[bool] = None
-    text: str
-    ts: datetime
+    role: Optional[str] = None
+    badges: List[str] = []
+    profile_emoji: str = "◇"
+    profile_color: str = "#6366f1"
 
 
 # -------------------- AUTH HELPERS --------------------
@@ -183,6 +184,7 @@ def user_to_out(u: dict) -> UserOut:
         badges=u.get("badges", []) or [],
         profile_emoji=u.get("profile_emoji", "◇") or "◇",
         profile_color=u.get("profile_color", "#6366f1") or "#6366f1",
+        profile_banner=u.get("profile_banner", "") or "",
         profile_bio=u.get("profile_bio", "") or "",
         created_at=u["created_at"] if isinstance(u["created_at"], datetime)
         else datetime.fromisoformat(u["created_at"]),
@@ -285,6 +287,7 @@ class UserProfileIn(BaseModel):
     username: Optional[str] = None
     badges: Optional[List[str]] = []
     profile_bio: Optional[str] = ""
+    profile_banner: Optional[str] = ""
     profile_emoji: Optional[str] = "◇"
     profile_color: Optional[str] = "#6366f1"
 
@@ -406,13 +409,18 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _msg_doc(kind: str, text: str, user: Optional[dict] = None) -> dict:
+def _msg_doc(kind: str, text: str, user: Optional[dict] = None, channel: str = "general") -> dict:
     return {
         "id": str(uuid.uuid4()),
         "kind": kind,
         "user_id": user["id"] if user else None,
         "username": user["username"] if user else None,
         "is_dev": bool(user.get("is_dev", False)) if user else None,
+        "role": user.get("role", "member") if user else None,
+        "badges": user.get("badges", []) if user else [],
+        "profile_emoji": user.get("profile_emoji", "◇") if user else "◇",
+        "profile_color": user.get("profile_color", "#6366f1") if user else "#6366f1",
+        "channel": channel or "general",
         "text": text,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
@@ -437,6 +445,11 @@ async def _blocked_words() -> List[str]:
     return list(doc["words"]) if doc and "words" in doc else []
 
 
+async def _disabled_apps() -> List[str]:
+    doc = await db.config.find_one({"_id": "disabled_apps"}, {"_id": 0, "apps": 1})
+    return list(doc["apps"]) if doc and "apps" in doc else []
+
+
 def _filter_message(text: str, blocked: List[str]) -> str:
     if not blocked or not text:
         return text
@@ -451,19 +464,28 @@ def _filter_message(text: str, blocked: List[str]) -> str:
 
 async def _save_and_broadcast(doc: dict):
     await db.chat_messages.insert_one({**doc})
-    out = {k: doc[k] for k in ("id", "kind", "user_id", "username", "is_dev", "text", "ts")}
+    out = {k: doc[k] for k in ("id", "kind", "user_id", "username", "is_dev", "role", "badges", "profile_emoji", "profile_color", "channel", "text", "ts")}
     await manager.broadcast({"type": "message", "data": out})
 
 
 @api_router.get("/chat/history", response_model=List[ChatMessageOut])
-async def chat_history(limit: int = 50, user: dict = Depends(get_current_user)):
-    cursor = db.chat_messages.find({}, {"_id": 0}).sort("ts", -1).limit(min(max(limit, 1), 200))
+async def chat_history(limit: int = 50, channel: Optional[str] = Query(None), user: dict = Depends(get_current_user)):
+    if channel is None:
+        query = {}
+    elif channel == "general":
+        query = {"$or": [{"channel": "general"}, {"channel": {"$exists": False}}]}
+    else:
+        query = {"channel": channel}
+    cursor = db.chat_messages.find(query, {"_id": 0}).sort("ts", -1).limit(min(max(limit, 1), 200))
     items = await cursor.to_list(length=limit)
     items.reverse()
     return [
         ChatMessageOut(
             id=m["id"], kind=m["kind"], user_id=m.get("user_id"), username=m.get("username"),
-            is_dev=m.get("is_dev"), text=m["text"],
+            is_dev=m.get("is_dev"), role=m.get("role"), badges=m.get("badges", []),
+            profile_emoji=m.get("profile_emoji", "◇"), profile_color=m.get("profile_color", "#6366f1"),
+            channel=m.get("channel", "general"),
+            text=m["text"],
             ts=m["ts"] if isinstance(m["ts"], datetime) else datetime.fromisoformat(m["ts"]),
         )
         for m in items
@@ -485,9 +507,13 @@ async def _save_dm(from_user: dict, to_user_id: str, text: str):
         "to_user_id": to_user_id,
         "text": text[:500],
         "ts": datetime.now(timezone.utc).isoformat(),
+        "role": from_user.get("role", "member") or "member",
+        "badges": from_user.get("badges", []) or [],
+        "profile_emoji": from_user.get("profile_emoji", "◇") or "◇",
+        "profile_color": from_user.get("profile_color", "#6366f1") or "#6366f1",
     }
     await db.dm_messages.insert_one({**doc})
-    out = {k: doc[k] for k in ("id", "from_user_id", "from_username", "to_user_id", "text", "ts")}
+    out = {k: doc[k] for k in ("id", "from_user_id", "from_username", "to_user_id", "text", "ts", "role", "badges", "profile_emoji", "profile_color")}
     await manager.send_to_user(to_user_id, {"type": "dm", "data": out})
     return out
 
@@ -512,6 +538,10 @@ async def dm_history(other_user_id: str, limit: int = 50, user: dict = Depends(g
             from_username=m["from_username"],
             to_user_id=m["to_user_id"],
             text=m["text"],
+            role=m.get("role"),
+            badges=m.get("badges", []),
+            profile_emoji=m.get("profile_emoji", "◇"),
+            profile_color=m.get("profile_color", "#6366f1"),
             ts=m["ts"] if isinstance(m["ts"], datetime) else datetime.fromisoformat(m["ts"]),
         )
         for m in items
@@ -594,6 +624,21 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...), fp: Optional[st
         while True:
             data = await websocket.receive_json()
             
+            # Enforce chat timeout for non-developers
+            timeout_until = user.get("chat_timeout_until")
+            if timeout_until:
+                try:
+                    timeout_dt = datetime.fromisoformat(timeout_until)
+                except Exception:
+                    timeout_dt = None
+                if timeout_dt and timeout_dt > datetime.now(timezone.utc) and not bool(user.get("is_dev", False)):
+                    await websocket.send_json({
+                        "type": "notify",
+                        "title": "Chat timeout",
+                        "body": "You are timed out from chat until {}. You cannot send messages during this timeout.".format(timeout_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
+                    })
+                    continue
+
             # Handle DM
             if data.get("type") == "dm":
                 to_user_id = (data.get("to_user_id") or "").strip()
@@ -610,10 +655,22 @@ async def ws_chat(websocket: WebSocket, token: str = Query(...), fp: Optional[st
             text = (data.get("text") or "").strip()
             if not text:
                 continue
+            channel = (data.get("channel") or "general").strip().lower()
+            allowed_public = {"general", "updates"}
+            allowed_dev = {"dev-updates", "dev-todo"}
+            if channel not in allowed_public and channel not in allowed_dev:
+                channel = "general"
+            if channel in allowed_dev and not bool(user.get("is_dev", False)):
+                await websocket.send_json({
+                    "type": "notify",
+                    "title": "Access denied",
+                    "body": "You do not have permission to post in that channel.",
+                })
+                continue
             text = text[:500]
             blocked = await _blocked_words()
             text = _filter_message(text, blocked)
-            doc = _msg_doc("msg", text, user)
+            doc = _msg_doc("msg", text, user, channel=channel)
             await _save_and_broadcast(doc)
     except WebSocketDisconnect:
         pass
@@ -1024,15 +1081,18 @@ async def proxy(url: str = Query(...), request: Request = None):
 
     try:
         upstream_headers["Connection"] = "keep-alive"
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=20.0,
-            headers=upstream_headers,
-            http2=True,
-            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
-            trust_env=False,
-        ) as client_:
-            r = await client_.get(url)
+        client_ = proxy_client
+        if client_ is None:
+            client_ = httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=20.0,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+                trust_env=False,
+            )
+            r = await client_.get(url, headers=upstream_headers)
+            await client_.aclose()
+        else:
+            r = await client_.get(url, headers=upstream_headers)
     except Exception as e:
         return HTMLResponse(
             f"<html><body style='font-family:monospace;background:#0f172a;color:#fda4af;padding:24px;'>"
@@ -1143,6 +1203,51 @@ async def proxy_health():
     return {"ok": True, "service": "astra-proxy"}
 
 
+@api_router.get("/discordpfp")
+async def discord_pfp_gallery(page: int = 1):
+    target = "https://www.discordpfp.gg/"
+    if page > 1:
+        target = f"https://www.discordpfp.gg/?page={page}"
+
+    headers = {
+        "User-Agent": PROXY_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.discordpfp.gg/",
+    }
+    client_ = proxy_client
+    temp_client = False
+    if client_ is None:
+        client_ = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=20.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+            trust_env=False,
+        )
+        temp_client = True
+    try:
+        resp = await client_.get(target, headers=headers)
+        html = resp.text
+    except Exception as e:
+        if temp_client:
+            await client_.aclose()
+        raise HTTPException(status_code=502, detail=f"Unable to fetch DiscordPFP gallery: {type(e).__name__}: {e}")
+    finally:
+        if temp_client:
+            await client_.aclose()
+
+    urls = []
+    for match in re.findall(r'(https?://[^"\']+\.(?:png|jpg|jpeg|webp))', html, re.IGNORECASE):
+        if "discordpfp.gg" in match or "cdn.discordpfp.gg" in match:
+            cleaned = match.split("?")[0]
+            if cleaned not in urls:
+                urls.append(cleaned)
+                if len(urls) >= 120:
+                    break
+
+    return {"avatars": urls, "page": page}
+
+
 # -------------------- ADMIN (is_dev only) --------------------
 async def get_dev_user(user: dict = Depends(get_current_user)) -> dict:
     if not bool(user.get("is_dev", False)):
@@ -1173,6 +1278,15 @@ class LaunchIn(BaseModel):
 
 class NavigateIn(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class TimeoutIn(BaseModel):
+    duration_minutes: int = Field(default=10, ge=0, le=1440)
+    reason: Optional[str] = None
+
+
+class AppToggleIn(BaseModel):
+    disabled: bool = Field(default=True)
 
 
 class TakeoverIn(BaseModel):
@@ -1239,6 +1353,75 @@ async def admin_set_role(user_id: str, payload: RoleIn, dev: dict = Depends(get_
     await db.users.update_one({"id": user_id}, {"$set": {"role": role}})
     await _log_event("role_change", user_id=user_id, username=target["username"], meta={"by": dev["username"], "role": role})
     return {"ok": True, "role": role}
+
+
+@api_router.post("/admin/users/{user_id}/timeout")
+async def admin_timeout(user_id: str, payload: TimeoutIn, dev: dict = Depends(get_dev_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "username": 1, "is_dev": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.get("is_dev"):
+        raise HTTPException(status_code=400, detail="Cannot timeout a developer.")
+    if payload.duration_minutes == 0:
+        await db.users.update_one({"id": user_id}, {"$unset": {"chat_timeout_until": "", "chat_timeout_reason": ""}})
+        await _log_event("chat_timeout_cleared", user_id=user_id, username=target["username"], meta={"by": dev["username"]})
+        return {"ok": True, "cleared": True}
+    until = datetime.now(timezone.utc) + timedelta(minutes=payload.duration_minutes)
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"chat_timeout_until": until.isoformat(), "chat_timeout_reason": payload.reason or "Timed out from chat"}},
+    )
+    await _log_event("chat_timeout", user_id=user_id, username=target["username"], meta={"by": dev["username"], "minutes": payload.duration_minutes, "reason": payload.reason or ""})
+    await manager.send_to_user(user_id, {
+        "type": "notify",
+        "title": "Chat timeout",
+        "body": f"You have been timed out from chat for {payload.duration_minutes} minute(s).",
+        "from": dev["username"],
+    })
+    return {"ok": True, "until": until.isoformat()}
+
+
+@api_router.get("/apps/disabled")
+async def get_disabled_apps():
+    return {"apps": await _disabled_apps()}
+
+
+@api_router.get("/admin/apps")
+async def admin_apps(_: dict = Depends(get_dev_user)):
+    disabled = await _disabled_apps()
+    builtin = [
+        {"id": "Browser", "label": "Browser"},
+        {"id": "Store", "label": "Store"},
+        {"id": "Chat", "label": "Chat"},
+        {"id": "Settings", "label": "Settings"},
+        {"id": "Notes", "label": "Notes"},
+        {"id": "Terminal", "label": "Terminal"},
+        {"id": "Files", "label": "Files"},
+        {"id": "Calculator", "label": "Calculator"},
+        {"id": "Clock", "label": "Clock"},
+        {"id": "Snake", "label": "Snake"},
+        {"id": "Paint", "label": "Paint"},
+        {"id": "DevConsole", "label": "Dev Console"},
+    ]
+    return {"apps": [{**a, "disabled": a["id"] in disabled} for a in builtin], "disabled": disabled}
+
+
+@api_router.post("/admin/apps/{app_id}/toggle")
+async def admin_toggle_app(app_id: str, payload: AppToggleIn, dev: dict = Depends(get_dev_user)):
+    disabled = await _disabled_apps()
+    app_id = app_id.strip()
+    if payload.disabled:
+        if app_id not in disabled:
+            disabled.append(app_id)
+    else:
+        disabled = [a for a in disabled if a != app_id]
+    await db.config.update_one(
+        {"_id": "disabled_apps"},
+        {"$set": {"apps": disabled}},
+        upsert=True,
+    )
+    await _log_event("app_disabled" if payload.disabled else "app_enabled", username=dev["username"], meta={"app": app_id, "disabled": payload.disabled})
+    return {"ok": True, "apps": disabled}
 
 
 @api_router.post("/admin/users/{user_id}/notify")
@@ -1425,13 +1608,41 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def _on_start():
+    global proxy_client
     try:
         await db.users.create_index("username_lower", unique=True)
         await db.chat_messages.create_index("ts")
     except Exception as e:
         logger.warning("Index creation issue: %s", e)
+    try:
+        proxy_client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=20.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+            trust_env=False,
+        )
+    except Exception as e:
+        logger.warning("Proxy client creation failed: %s", e)
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global proxy_client
+    if proxy_client is not None:
+        try:
+            await proxy_client.aclose()
+        except Exception:
+            pass
     client.close()
+
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint to keep server alive."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@api_router.get("/health")
+async def api_health_check():
+    """API health check endpoint."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}

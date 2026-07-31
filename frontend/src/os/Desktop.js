@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush, Store as StoreIcon, ShieldAlert } from "lucide-react";
+import { Globe, Settings as SettingsIcon, FileText, TerminalSquare, Folder, Calculator as CalcIcon, MessageSquare, Clock as ClockIcon, Gamepad2, Brush, Store as StoreIcon, ShieldAlert, User2 } from "lucide-react";
 import { loadInstalled } from "./installedApps";
 import { useAuth } from "../auth/AuthContext";
 
@@ -9,6 +9,7 @@ export const BUILTIN_ICONS = [
   { id: "Browser",    label: "BROWSER",   Icon: Globe },
   { id: "Store",      label: "STORE",     Icon: StoreIcon },
   { id: "Chat",       label: "CHAT",      Icon: MessageSquare },
+  { id: "Profile",    label: "PROFILE",   Icon: User2 },
   { id: "Settings",   label: "SETTINGS",  Icon: SettingsIcon },
   { id: "Notes",      label: "NOTES",     Icon: FileText },
   { id: "Terminal",   label: "TERMINAL",  Icon: TerminalSquare },

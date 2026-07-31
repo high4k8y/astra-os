@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import "@/App.css";
 import "./os/os.css";
 
@@ -24,6 +24,7 @@ import Clock from "./os/apps/Clock";
 import Snake from "./os/apps/Snake";
 import Paint from "./os/apps/Paint";
 import Store from "./os/apps/Store";
+import ProfilePicker from "./os/apps/ProfilePicker";
 import WebApp from "./os/apps/WebApp";
 import DevConsole from "./os/apps/DevConsole";
 import ControlListener from "./os/ControlListener";
@@ -32,6 +33,7 @@ import { loadInstalled } from "./os/installedApps";
 const APP_META = {
   Browser:    { title: "Browser",    w: 920, h: 580, comp: Browser },
   Store:      { title: "App Store",  w: 720, h: 560, comp: Store },
+  Profile:    { title: "Profile Picker", w: 760, h: 520, comp: ProfilePicker },
   Chat:       { title: "Chat",       w: 760, h: 520, comp: Chat },
   Settings:   { title: "Settings",   w: 580, h: 580, comp: Settings },
   Notes:      { title: "Notes",      w: 580, h: 460, comp: Notes },
@@ -50,9 +52,41 @@ function spawnPos(n) {
 
 function Shell() {
   const { settings } = useSettings();
+  const { user } = useAuth();
   const [windows, setWindows] = useState([]);
   const [zTop, setZTop] = useState(100);
   const [focusedId, setFocusedId] = useState(null);
+  const [disabledApps, setDisabledApps] = useState([]);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+
+  const UPDATE_NOTICE_KEY = "astra_update_notice_v1";
+  const UPDATE_NOTICE_TEXT = "New Astra OS update: admin app disable controls, chat timeout management, role permissions, window resizing, and a first-time update notice on login.";
+
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const seen = localStorage.getItem(UPDATE_NOTICE_KEY);
+      if (!seen) {
+        setShowUpdateModal(true);
+      }
+    } catch (e) {
+      setShowUpdateModal(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const loadDisabled = async () => {
+      try {
+        const res = await fetch(`${process.env.REACT_APP_BACKEND_URL || ""}/api/apps/disabled`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setDisabledApps(Array.isArray(data.apps) ? data.apps : []);
+      } catch (e) {
+        console.warn("Failed to load disabled apps", e);
+      }
+    };
+    loadDisabled();
+  }, []);
 
   const focus = useCallback((id) => {
     setZTop((z) => z + 1);
@@ -61,6 +95,10 @@ function Shell() {
   }, [zTop]);
 
   const launch = useCallback((id) => {
+    if (disabledApps.includes(id) && !user?.is_dev) {
+      window.alert(`${id} is disabled by an administrator.`);
+      return;
+    }
     setWindows((ws) => {
       const existing = ws.find((w) => w.id === id);
       if (existing) {
@@ -91,7 +129,7 @@ function Shell() {
       }
       return ws;
     });
-  }, [zTop]);
+  }, [disabledApps, user?.is_dev, zTop]);
 
   if (typeof window !== "undefined") window.__astraLaunch = launch;
 
@@ -124,6 +162,20 @@ function Shell() {
       <CustomCursor mode={settings.cursor || "dot"} />
       <ControlListener />
       <BootLoader />
+      {showUpdateModal && (
+        <div className="ax-update-modal">
+          <div className="ax-update-card">
+            <h2>What's new</h2>
+            <p>{UPDATE_NOTICE_TEXT}</p>
+            <button className="nx-btn primary" onClick={() => {
+              localStorage.setItem(UPDATE_NOTICE_KEY, "1");
+              setShowUpdateModal(false);
+            }}>
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       <Desktop onLaunch={launch} />
       {windows.map((w) => {
         if (w.minimized) return null;

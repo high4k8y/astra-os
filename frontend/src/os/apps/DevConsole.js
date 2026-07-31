@@ -3,6 +3,7 @@ import axios from "axios";
 import {
   Users, ShieldAlert, FileText, Filter, Megaphone, Power, Send, Rocket,
   Trash2, RefreshCw, Cpu, Link as LinkIcon, X as XIcon, LogOut, MessageSquare, AlertTriangle,
+  Clock, Settings,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 
@@ -13,6 +14,7 @@ const TABS = [
   { id: "chat",      label: "Chat",       Icon: MessageSquare },
   { id: "events",    label: "Events",     Icon: FileText },
   { id: "filter",    label: "Filter",     Icon: Filter },
+  { id: "apps",      label: "Apps",       Icon: Settings },
   { id: "broadcast", label: "Broadcast",  Icon: Megaphone },
 ];
 
@@ -47,6 +49,7 @@ export default function DevConsole() {
         {tab === "chat" && <ChatModPane />}
         {tab === "events" && <EventsPane />}
         {tab === "filter" && <FilterPane />}
+        {tab === "apps" && <AppsPane />}
         {tab === "broadcast" && <BroadcastPane />}
       </div>
     </div>
@@ -140,6 +143,14 @@ function UsersPane() {
     if (!normalized) return;
     action("Set role", () => api({ method: "POST", url: `${API}/admin/users/${u.id}/role`, data: { role: normalized } }), u.id);
   };
+  const timeoutUser = (u) => {
+    const raw = window.prompt(`Timeout "${u.username}" from chat for how many minutes? Enter 0 to clear timeout.`, "10");
+    if (raw === null) return;
+    const minutes = Number(raw);
+    if (Number.isNaN(minutes) || minutes < 0) return;
+    const reason = window.prompt("Reason for timeout (optional):", "");
+    action("Timeout", () => api({ method: "POST", url: `${API}/admin/users/${u.id}/timeout`, data: { duration_minutes: minutes, reason } }), u.id);
+  };
   const navigate = (u) => {
     const url = window.prompt(`Open URL in ${u.username}'s Browser:`, "https://example.com");
     if (!url) return;
@@ -168,6 +179,11 @@ function UsersPane() {
                     <span className="ax-dev-username">{u.username}</span>
                     {u.is_dev && <span className="ax-chat-devchip" style={{ marginLeft: 6 }}>dev</span>}
                     {u.role && !u.is_dev && <span className="ax-dev-role" style={{ marginLeft: 6 }}>{u.role}</span>}
+                    {u.chat_timeout_until && !u.is_dev && (
+                      <span className="ax-dev-banchip" style={{ marginLeft: 6 }}>
+                        timed out until {new Date(u.chat_timeout_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
                     {u.is_banned && <span className="ax-dev-banchip">{u.hw_banned ? "hw-banned" : "banned"}</span>}
                   </div>
                   <div className="ax-dev-id">{u.id.slice(0, 8)} · joined {new Date(u.created_at).toLocaleDateString()}</div>
@@ -194,6 +210,9 @@ function UsersPane() {
                   </button>
                   <button onClick={() => setRole(u)} disabled={!!busy[u.id]} title="Assign or change this user's role" data-testid={`dev-setrole-${u.username}`}>
                     <ShieldAlert size={11} strokeWidth={1.8} /> Set role
+                  </button>
+                  <button onClick={() => timeoutUser(u)} disabled={u.is_dev || !!busy[u.id]} title={u.is_dev ? "Cannot timeout a developer" : "Timeout this user in chat"} data-testid={`dev-timeout-${u.username}`}>
+                    <Clock size={11} strokeWidth={1.8} /> Timeout
                   </button>
                   <button onClick={() => closeAll(u)} disabled={!u.online || !!busy[u.id]} title="Close every app on their screen" data-testid={`dev-closeall-${u.username}`}>
                     <XIcon size={11} strokeWidth={1.8} /> Close all
@@ -382,6 +401,81 @@ function FilterPane() {
           <Trash2 size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: 4 }} /> Clear
         </button>
         {msg && <span className="ax-dev-count" data-testid="dev-filter-msg">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+function AppsPane() {
+  const api = useApi();
+  const [apps, setApps] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api({ method: "GET", url: `${API}/admin/apps` });
+      setApps(data.apps || []);
+    } catch (e) {
+      setMsg("Failed to load app list.");
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleApp = async (app) => {
+    setBusy((b) => ({ ...b, [app.id]: true }));
+    setMsg("");
+    try {
+      const { data } = await api({ method: "POST", url: `${API}/admin/apps/${encodeURIComponent(app.id)}/toggle`, data: { disabled: !app.disabled } });
+      const next = apps.map((item) => item.id === app.id ? { ...item, disabled: !item.disabled } : item);
+      setApps(next);
+      setMsg(`✓ ${app.label} is now ${app.disabled ? "enabled" : "disabled"}.`);
+    } catch (e) {
+      setMsg(`✗ ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setBusy((b) => { const n = { ...b }; delete n[app.id]; return n; });
+      setTimeout(() => setMsg(""), 4500);
+    }
+  };
+
+  return (
+    <div data-testid="dev-pane-apps">
+      <div className="ax-dev-toolbar">
+        <button className="nx-small-btn" onClick={load} disabled={loading} data-testid="dev-apps-refresh">
+          <RefreshCw size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: 4 }} />
+          Refresh
+        </button>
+        <span className="ax-dev-count">{apps.length} apps</span>
+      </div>
+      {msg && <div className="ax-dev-msg" data-testid="dev-apps-msg">{msg}</div>}
+      <div className="ax-dev-table" data-testid="dev-apps-list">
+        {apps.map((app) => (
+          <div className="ax-dev-row" key={app.id}>
+            <div className="ax-dev-row-main">
+              <div className="ax-dev-userinfo">
+                <div>
+                  <span className="ax-dev-username">{app.label}</span>
+                  {app.disabled && <span className="ax-dev-banchip" style={{ marginLeft: 6 }}>disabled</span>}
+                </div>
+                <div className="ax-dev-id">{app.id}</div>
+              </div>
+              <button
+                className={`nx-small-btn ${app.disabled ? "ok" : "danger"}`}
+                onClick={() => toggleApp(app)}
+                disabled={!!busy[app.id]}
+                data-testid={`dev-app-toggle-${app.id}`}
+              >
+                {app.disabled ? "Enable" : "Disable"}
+              </button>
+            </div>
+          </div>
+        ))}
+        {apps.length === 0 && <div className="ax-files-empty">No apps found.</div>}
       </div>
     </div>
   );

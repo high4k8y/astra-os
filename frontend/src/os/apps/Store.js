@@ -77,22 +77,24 @@ export default function Store() {
             </div>
             <div className="ax-store-grid">
               {filtered.map((c) => {
-                const installedHere = isInstalled(c.id);
+                const isBuiltin = c.builtin;
+                const installedHere = isBuiltin ? false : isInstalled(c.id);
+                const canLaunch = isBuiltin ? typeof window !== "undefined" && !!window.__astraLaunch : true;
                 return (
                   <div className="ax-store-card" key={c.id} data-testid={`store-card-${c.id}`}>
                     <div className="ax-store-icon" style={{ background: c.color }}>{c.emoji}</div>
                     <div className="ax-store-meta">
                       <div className="ax-store-name">{c.name}</div>
                       <div className="ax-store-desc">{c.desc}</div>
-                      <div className="ax-store-url">{c.url.replace(/^https?:\/\//, "")}</div>
+                      <div className="ax-store-url">{c.displayUrl || c.url.replace(/^https?:\/\//, "")}</div>
                     </div>
                     <button
-                      className={`ax-store-install ${installedHere ? "installed" : ""}`}
-                      onClick={() => !installedHere && onInstall(c)}
-                      disabled={installedHere}
+                      className={`ax-store-install ${installedHere ? "installed" : ""} ${isBuiltin ? "launch" : ""}`}
+                      onClick={() => isBuiltin ? window.__astraLaunch?.(c.launchId || c.id) : (!installedHere && onInstall(c))}
+                      disabled={installedHere || (isBuiltin && !canLaunch)}
                       data-testid={`store-install-${c.id}`}
                     >
-                      {installedHere ? <><Check size={12} strokeWidth={2.4} /> Installed</> : <><Plus size={12} strokeWidth={2.4} /> Install</>}
+                      {isBuiltin ? <><Check size={12} strokeWidth={2.4} /> Launch</> : installedHere ? <><Check size={12} strokeWidth={2.4} /> Installed</> : <><Plus size={12} strokeWidth={2.4} /> Install</>}
                     </button>
                   </div>
                 );

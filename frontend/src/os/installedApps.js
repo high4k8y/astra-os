@@ -30,10 +30,11 @@ export const CATALOG = [
 
   // Bot-walled / login-walled — proxy gets 403, direct gets X-Frame-Options. Show fallback.
   { id: "reddit",    name: "Reddit",      url: "https://www.reddit.com",             color: "#FF4500", emoji: "🅁", desc: "Front page of the internet.",            mode: "fallback" },
-  { id: "discord",   name: "Discord",     url: "https://discord.com/app",            color: "#5865F2", emoji: "💬", desc: "Voice, video & chat for communities.", mode: "fallback" },
+  { id: "community-chat",   name: "Community Chat", url: "https://community-chat.example.com", displayUrl: "community chat service", color: "#5865F2", emoji: "💬", desc: "Voice, video & chat for communities.", mode: "fallback" },
   { id: "chatgpt",   name: "ChatGPT",     url: "https://chat.openai.com",            color: "#10A37F", emoji: "✦",  desc: "OpenAI's AI assistant.",                mode: "fallback" },
   { id: "x",         name: "X",           url: "https://x.com",                       color: "#1d1d1f", emoji: "𝕏", desc: "What's happening, in real time.",       mode: "fallback" },
   { id: "twitch",    name: "Twitch",      url: "https://www.twitch.tv",              color: "#9146FF", emoji: "⌬",  desc: "Live streaming for gamers.",            mode: "fallback" },
+  { id: "profilepicker", name: "Profile Picker", url: "app://profilepicker", color: "#5865F2", emoji: "👤", desc: "Launch the profile editor from the store.", builtin: true, launchId: "Profile" },
 ];
 
 export function loadInstalled() {
